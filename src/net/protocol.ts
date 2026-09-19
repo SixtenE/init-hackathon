@@ -55,7 +55,6 @@ export type ServerMessage =
   | LeaveMessage
   | { type: string };
 
-const DEFAULT_PORT = "8080";
 const NAME_KEY = "flight_pilot_name";
 
 export function isWelcome(message: ServerMessage): message is WelcomeMessage {
@@ -82,14 +81,11 @@ export function defaultWsUrl(): string {
   const explicit = params.get("server");
   if (explicit) return explicit;
 
-  // Production: same-origin /ws behind TLS, matching jump-prince.
-  if (window.location.protocol === "https:") {
-    return `wss://${window.location.host}/ws`;
-  }
-
-  // Local HTTP: talk to the C++ relay directly. Override with ?port=8081.
-  const port = params.get("port") ?? DEFAULT_PORT;
-  return `ws://${window.location.hostname}:${port}`;
+  // Same-origin /ws: Vite proxies it in dev; the C++ server hosts it in production.
+  const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
+  const port = params.get("port");
+  const host = port ? `${window.location.hostname}:${port}` : window.location.host;
+  return `${proto}//${host}/ws`;
 }
 
 export function randomPilotName(): string {

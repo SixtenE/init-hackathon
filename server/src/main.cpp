@@ -6,6 +6,7 @@
 #include <csignal>
 #include <cstdlib>
 #include <iostream>
+#include <string>
 
 // Client-authoritative relay, matching jump-prince:
 //   Client -> Server: hello, pose (~20Hz), reset
@@ -32,6 +33,14 @@ int parse_port(int argc, char** argv) {
   }
   return 8080;
 }
+
+std::string parse_static_dir(int argc, char** argv) {
+  if (argc > 2 && argv[2][0] != '\0') return argv[2];
+  if (const char* env = std::getenv("GAME_STATIC_DIR")) {
+    if (env[0] != '\0') return env;
+  }
+  return "dist";
+}
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -40,8 +49,9 @@ int main(int argc, char** argv) {
   std::signal(SIGPIPE, SIG_IGN);
 
   const int port = parse_port(argc, argv);
+  const std::string static_dir = parse_static_dir(argc, argv);
   GameWorld world;
-  WebSocketServer server(port);
+  WebSocketServer server(port, static_dir);
 
   auto broadcast = [&](const std::string& payload, int except_id = -1) {
     for (int id : world.player_ids()) {

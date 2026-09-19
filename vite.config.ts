@@ -49,6 +49,12 @@ export default defineConfig({
       plugins: [rapierCompatInitPlugin()],
     },
   },
+  // Production assets are copied to dist/ and served by the C++ game server.
+  build: {
+    outDir: 'dist',
+    emptyOutDir: true,
+    assetsDir: 'assets',
+  },
   server: {
     host: true,
     proxy: {
