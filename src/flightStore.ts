@@ -1,6 +1,9 @@
 import { create } from "zustand";
 import type { PlayerState } from "./net/protocol";
 
+const SPAWN_AIRSPEED = (250 * 0.514444) / 3;
+const SPAWN_THROTTLE = (250 / 330) ** 2;
+
 type FlightTelemetry = {
   airspeed: number;
   throttle: number;
@@ -29,16 +32,18 @@ type FlightState = FlightTelemetry & {
   setTelemetry: (telemetry: FlightTelemetry) => void;
   setConnection: (connection: ConnectionStatus, playerId?: number | null) => void;
   applyServerState: (players: PlayerState[]) => void;
+  upsertPlayer: (player: PlayerState) => void;
+  removePlayer: (id: number) => void;
 };
 
 export const useFlightStore = create<FlightState>((set) => ({
   debug: false,
   fps: 0,
-  airspeed: 0,
-  throttle: 0,
+  airspeed: SPAWN_AIRSPEED,
+  throttle: SPAWN_THROTTLE,
   verticalSpeed: 0,
   angleOfAttack: 0,
-  grounded: true,
+  grounded: false,
   position: { x: 0, y: 0, z: 0 },
   crashed: false,
   crashReason: null,
@@ -53,11 +58,11 @@ export const useFlightStore = create<FlightState>((set) => ({
     crashReason: reason,
   }),
   resetFlight: () => set((state) => ({
-    airspeed: 0,
-    throttle: 0,
+    airspeed: SPAWN_AIRSPEED,
+    throttle: SPAWN_THROTTLE,
     verticalSpeed: 0,
     angleOfAttack: 0,
-    grounded: true,
+    grounded: false,
     position: { x: 0, y: 0, z: 0 },
     crashed: false,
     crashReason: null,
@@ -79,6 +84,27 @@ export const useFlightStore = create<FlightState>((set) => ({
       return {
         players,
         playerIds: idsChanged ? ids : state.playerIds,
+      };
+    }),
+  upsertPlayer: (player) =>
+    set((state) => {
+      const index = state.players.findIndex((entry) => entry.id === player.id);
+      if (index >= 0) {
+        const players = state.players.slice();
+        players[index] = player;
+        return { players };
+      }
+      return {
+        players: [...state.players, player],
+        playerIds: [...state.playerIds, player.id],
+      };
+    }),
+  removePlayer: (id) =>
+    set((state) => {
+      if (!state.playerIds.includes(id)) return state;
+      return {
+        players: state.players.filter((player) => player.id !== id),
+        playerIds: state.playerIds.filter((playerId) => playerId !== id),
       };
     }),
 }));

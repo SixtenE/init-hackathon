@@ -28,6 +28,25 @@ export function resetSnapshots(): void {
   snapshots.length = 0;
 }
 
+export function removePlayerSnapshots(id: number): void {
+  for (const snapshot of snapshots) snapshot.players.delete(id);
+}
+
+export function upsertPlayerSnapshot(
+  player: PlayerState,
+  tick: number,
+  time = performance.now(),
+): void {
+  const players = new Map<number, PlayerState>();
+  const last = snapshots[snapshots.length - 1];
+  if (last) {
+    for (const [id, pose] of last.players) players.set(id, pose);
+  }
+  players.set(player.id, player);
+  snapshots.push({ time, tick, players });
+  if (snapshots.length > MAX_SNAPSHOTS) snapshots.splice(0, snapshots.length - MAX_SNAPSHOTS);
+}
+
 export function pushSnapshot(message: StateMessage, time = performance.now()): void {
   const players = new Map<number, PlayerState>();
   for (const player of message.players) players.set(player.id, player);

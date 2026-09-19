@@ -4,11 +4,20 @@
   box-sizing: border-box;
 }
 
+html {
+  scroll-snap-type: y mandatory;
+}
+
 html,
 body,
 #root {
   margin: 0;
   width: 100%;
-  height: 100%;
-  overflow: hidden;
+  min-height: 100%;
+  background: #fff;
+  color-scheme: light;
+}
+
+body {
+  overflow-x: hidden;
 }

@@ -1,6 +1,7 @@
-import { lazy, Suspense, useEffect, useRef } from "react";
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import { Html } from "@react-three/drei";
+import { Portfolio } from "./Portfolio";
 import {
   BallCollider,
   CapsuleCollider,
@@ -17,6 +18,7 @@ import { gameClient } from "./net/gameClient";
 import { samplePlayer } from "./net/snapshots";
 import { useGameConnection } from "./net/useGameConnection";
 import { Explosion, type ExplosionHandle } from "./vfx/Explosion";
+import { CrumblingBuilding, BUILDING_WIDTH } from "./world/CrumblingBuilding";
 
 const AirbusA320 = lazy(() =>
   import("./models/AirbusA320").then(({ AirbusA320: Component }) => ({
@@ -33,45 +35,79 @@ const FOLLOW_SPEED = 6;
 // Field of view widens with speed: BASE_FOV at/below FOV_MIN_SPEED, MAX_FOV at FOV_MAX_SPEED.
 const BASE_FOV = 60;
 const MAX_FOV = 115;
-const FOV_MIN_SPEED = 8;
-const FOV_MAX_SPEED = 28;
 // How quickly the FOV follows the target (higher = snappier).
 const FOV_RESPONSE = 6;
 
-// The world is a narrow, endless strip running along +Z.
-const WORLD_WIDTH = 140;
+// Playable volume is a square arena on XZ, with a fixed ceiling height.
+const WORLD_SIZE = 800;
 const WORLD_HEIGHT = 120;
 const GROUND_Y = -WORLD_HEIGHT / 2;
 const SPAWN_Z = 0;
-// Landing gear (BallColliders below) reach 0.37 units under the body origin;
-// spawn so the wheels rest just on the ground.
-const GEAR_BOTTOM_OFFSET = 0.59 - 0.22;
-const SPAWN_Y = GROUND_Y + GEAR_BOTTOM_OFFSET + 0.02;
-// Length of the visible ground/wall shell that follows the aircraft.
-const WORLD_VISIBLE_LENGTH = 1600;
-// Effectively infinite extent for the static ground/ceiling/side colliders.
-const WORLD_COLLIDER_LENGTH = 1_000_000;
+// Start in the middle of the arena, well above the ground and the
+// building, with room to climb before the ceiling.
+const SPAWN_ALTITUDE = 42;
+const SPAWN_Y = GROUND_Y + SPAWN_ALTITUDE;
+const BUILDING_GAP = 3.5;
+const BUILDING_ORIGIN_A: [number, number, number] = [20, GROUND_Y, 145];
+const BUILDING_ORIGIN_B: [number, number, number] = [
+  BUILDING_ORIGIN_A[0] + BUILDING_WIDTH + BUILDING_GAP,
+  GROUND_Y,
+  145,
+];
 
 // Flight control tuning (units per second / radians per second).
 const MAX_BANK = 0.62;
 
-// Lightweight flight dynamics. Units are intentionally game-scaled, while
-// the relationships between thrust, drag, lift, and gravity remain physical.
+// World units follow the A320 model scale (~12.5 units long vs 37.6 m real).
+const KNOTS_TO_MPS = 0.514444;
+const METERS_PER_UNIT = 3;
+const knotsToSpeed = (knots: number) => (knots * KNOTS_TO_MPS) / METERS_PER_UNIT;
+const speedToKnots = (speed: number) => (speed * METERS_PER_UNIT) / KNOTS_TO_MPS;
+const unitsToFpm = (speed: number) => speed * METERS_PER_UNIT * 196.85;
+
+// Typical A320-200 at ~65 t. Stall and landing are landing-config VS1g / VREF;
+// takeoff speeds are a mid-weight Conf 1+F case. Cruise is 250 KIAS — the
+// real below-10,000 ft limit, which matches this low-altitude world better
+// than Mach 0.78 TAS (~450 kt).
+const STALL_SPEED_KT = 105;
+const V1_SPEED_KT = 142;
+const VR_SPEED_KT = 149;
+const V2_SPEED_KT = 155;
+const VREF_SPEED_KT = 135;
+const CRUISE_SPEED_KT = 250;
+const VMO_SPEED_KT = 350;
+const MAX_THRUST_SPEED_KT = 330;
+
+const STALL_SPEED = knotsToSpeed(STALL_SPEED_KT);
+const VR_SPEED = knotsToSpeed(VR_SPEED_KT);
+const CRUISE_SPEED = knotsToSpeed(CRUISE_SPEED_KT);
+const MAX_THRUST_SPEED = knotsToSpeed(MAX_THRUST_SPEED_KT);
+const VLS_SPEED = STALL_SPEED * 1.23;
+const FOV_MIN_SPEED = knotsToSpeed(130);
+const FOV_MAX_SPEED = knotsToSpeed(300);
+
 const GRAVITY = 9.81;
-// The aircraft starts parked on the runway: no speed, engines idle.
-const INITIAL_AIRSPEED = 0;
-const CRUISE_SPEED = 16;
-const INITIAL_THROTTLE = 0;
-const THROTTLE_RATE = 0.45;
-const MAX_ENGINE_ACCELERATION = 12;
-const DRAG_COEFFICIENT = 0.026;
+// Airborne spawn: cruise speed with the throttle that holds that speed in
+// level flight, so a restart does not immediately stall.
+const INITIAL_AIRSPEED = CRUISE_SPEED;
+const INITIAL_THROTTLE = (CRUISE_SPEED / MAX_THRUST_SPEED) ** 2;
+const THROTTLE_RATE = 0.32;
+// Full throttle tops out near 330 kt. Acceleration is quicker than a real
+// A320 takeoff roll so V1 still arrives in a playable ~8 s.
+const MAX_ENGINE_ACCELERATION = 4.5;
+const DRAG_COEFFICIENT = MAX_ENGINE_ACCELERATION / MAX_THRUST_SPEED ** 2;
 // Level wings only make a fraction of weight, so accelerating with the stick
-// neutral stays on the runway. The rest of the lift comes from angle of attack.
+// neutral stays on the runway. Cl is tuned so 1 g stall is at 105 kt / 24° AoA
+// and rotation at VR (~149 kt, ~12° AoA) just produces enough lift to fly.
 const LIFT_BASE_ACCELERATION = GRAVITY * 0.18;
-const LIFT_AOA_ACCELERATION = GRAVITY * 3.6;
+const LIFT_AOA_ACCELERATION = GRAVITY * 13.1;
 const MAX_LIFT_ACCELERATION = GRAVITY * 2.4;
+// Nose-up attitude that makes 1 g at cruise with the stick neutral.
+const TRIM_AOA = (GRAVITY - LIFT_BASE_ACCELERATION) / LIFT_AOA_ACCELERATION;
 const PITCH_SPEED = 0.7;
 const MAX_PITCH = 0.55;
+// A320 rotation is about 15° pitch, not a full stall pull.
+const MAX_GROUND_PITCH = 0.28;
 // Critical angle of attack. The stall meter fills as AoA approaches this.
 const STALL_AOA = 0.42;
 const SIDESLIP_DAMPING = 2.4;
@@ -92,64 +128,182 @@ const SHADOW_LOCAL_OFFSET = new THREE.Vector3(0, 0, -5.5);
 
 const MIN_DPR = 0.75;
 const MAX_DPR = 1.5;
+let captureFlightKeys = false;
+let canvasInView = false;
+let gameStarted = false;
+
+function updateCaptureFlightKeys() {
+  captureFlightKeys = gameStarted && canvasInView;
+}
 
 export default function App() {
   const debug = useFlightStore((state) => state.debug);
   const resetVersion = useFlightStore((state) => state.resetVersion);
+  const canvasRef = useRef<HTMLDivElement>(null);
+  const [sceneLoaded, setSceneLoaded] = useState(false);
+  const [inView, setInView] = useState(false);
+  const [started, setStarted] = useState(false);
   useGameConnection();
+
+  const handleSceneReady = useCallback(() => setSceneLoaded(true), []);
+  const startGame = useCallback(() => {
+    if (gameStarted) return;
+    gameStarted = true;
+    setStarted(true);
+    updateCaptureFlightKeys();
+  }, []);
+
+  useEffect(() => {
+    gameStarted = false;
+    return () => {
+      gameStarted = false;
+      canvasInView = false;
+      updateCaptureFlightKeys();
+    };
+  }, []);
+
   useEffect(() => {
     const handleShortcut = (event: KeyboardEvent) => {
       if ((event.metaKey || event.ctrlKey) && event.code === "KeyK") {
         event.preventDefault();
         if (!event.repeat) useFlightStore.getState().toggleDebug();
-      } else if (event.code === "KeyR" && useFlightStore.getState().crashed) {
-        event.preventDefault();
-        if (!event.repeat) {
-          useFlightStore.getState().resetFlight();
-          gameClient.sendReset();
-        }
       }
     };
     window.addEventListener("keydown", handleShortcut);
     return () => window.removeEventListener("keydown", handleShortcut);
   }, []);
 
+  useEffect(() => {
+    const el = canvasRef.current;
+    if (!el) return;
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        const visible = entry.isIntersecting && entry.intersectionRatio >= 0.45;
+        canvasInView = visible;
+        setInView(visible);
+        updateCaptureFlightKeys();
+      },
+      { threshold: [0, 0.45, 1] },
+    );
+    observer.observe(el);
+    return () => {
+      observer.disconnect();
+      canvasInView = false;
+      updateCaptureFlightKeys();
+    };
+  }, []);
+
   return (
-    <div style={{ width: "100vw", height: "100vh", position: "relative" }}>
-      <ConnectionBadge />
-      <DebugPanel />
-      <CrashOverlay />
-      <Canvas
-        camera={{ fov: BASE_FOV, near: 0.1, far: 600 }}
-        dpr={[MIN_DPR, MAX_DPR]}
-        gl={{ alpha: false, powerPreference: "high-performance", stencil: false }}
-      >
-        <FpsCounter />
-        <ambientLight intensity={0.6} />
-        <directionalLight position={[10, 20, 10]} intensity={1.2} />
-        <Suspense fallback={null}>
-          <Physics
-            gravity={[0, -GRAVITY, 0]}
-            timeStep={PHYSICS_STEP}
-            maxCcdSubsteps={2}
-            debug={debug}
-            colliders={false}
-          >
-            <WorldCube debug={debug} />
-            <WorldColliders />
-            <Aircraft key={resetVersion} debug={debug} />
-            <RemoteFleet debug={debug} />
-          </Physics>
-        </Suspense>
-      </Canvas>
+    <>
+      <Portfolio />
+      <div ref={canvasRef} className="relative h-screen w-full snap-start">
+        <ConnectionBadge />
+        <DebugPanel />
+        <GameLoadingScreen
+          loaded={sceneLoaded}
+          inView={inView}
+          started={started}
+          onStart={startGame}
+        />
+        <Canvas
+          camera={{ fov: BASE_FOV, near: 0.1, far: 1100 }}
+          dpr={[MIN_DPR, MAX_DPR]}
+          gl={{ alpha: false, powerPreference: "high-performance", stencil: false }}
+        >
+          <FpsCounter />
+          <ambientLight intensity={0.6} />
+          <directionalLight position={[10, 20, 10]} intensity={1.2} />
+          <Suspense fallback={null}>
+            <Physics
+              gravity={[0, -GRAVITY, 0]}
+              timeStep={PHYSICS_STEP}
+              maxCcdSubsteps={2}
+              debug={debug}
+              colliders={false}
+              paused={!started}
+            >
+              <WorldCube debug={debug} />
+              <WorldColliders />
+              <group key={resetVersion}>
+                <CrumblingBuilding origin={BUILDING_ORIGIN_A} />
+                <CrumblingBuilding origin={BUILDING_ORIGIN_B} />
+              </group>
+              <Aircraft key={resetVersion} debug={debug} />
+              <RemoteFleet debug={debug} />
+              <SceneReady onReady={handleSceneReady} />
+            </Physics>
+          </Suspense>
+        </Canvas>
+      </div>
+    </>
+  );
+}
+
+function SceneReady({ onReady }: { onReady: () => void }) {
+  useEffect(() => {
+    onReady();
+  }, [onReady]);
+  return null;
+}
+
+function GameLoadingScreen({
+  loaded,
+  inView,
+  started,
+  onStart,
+}: {
+  loaded: boolean;
+  inView: boolean;
+  started: boolean;
+  onStart: () => void;
+}) {
+  useEffect(() => {
+    if (!loaded || !inView || started) return;
+    const id = window.setTimeout(onStart, 900);
+    return () => window.clearTimeout(id);
+  }, [loaded, inView, started, onStart]);
+
+  useEffect(() => {
+    if (started) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (!inView) return;
+      if (event.code === "Space" || event.key === " ") event.preventDefault();
+      if (loaded && (event.code === "Space" || event.code === "Enter")) onStart();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [inView, loaded, started, onStart]);
+
+  if (started) return null;
+
+  return (
+    <div
+      onClick={loaded ? onStart : undefined}
+      style={{
+        position: "absolute",
+        inset: 0,
+        zIndex: 10,
+        display: "grid",
+        placeContent: "center",
+        background: "#000",
+        color: "#fff",
+        fontFamily: "system-ui, sans-serif",
+        fontSize: 13,
+        letterSpacing: "0.22em",
+        textTransform: "uppercase",
+        cursor: loaded ? "pointer" : "default",
+      }}
+    >
+      {loaded ? "Ready" : "Loading"}
     </div>
   );
 }
 
 function ConnectionBadge() {
   const connection = useFlightStore((state) => state.connection);
-  const playerCount = useFlightStore((state) => state.playerIds.length);
+  const remotes = useFlightStore((state) => state.playerIds.length);
   const live = connection === "connected";
+  const playerCount = live ? remotes + 1 : remotes;
 
   return (
     <div
@@ -169,7 +323,7 @@ function ConnectionBadge() {
       }}
     >
       {live
-        ? `LIVE · ${playerCount} ${playerCount === 1 ? "pilot" : "pilots"}`
+        ? `LIVE · ${gameClient.playerName} · ${playerCount} ${playerCount === 1 ? "pilot" : "pilots"}`
         : connection === "connecting"
           ? "Connecting to game server"
           : "Offline · physics still local"}
@@ -177,31 +331,15 @@ function ConnectionBadge() {
   );
 }
 
-function CrashOverlay() {
-  const crashed = useFlightStore((state) => state.crashed);
-  const reason = useFlightStore((state) => state.crashReason);
-  if (!crashed) return null;
-
-  return (
-    <div
-      style={{
-        position: "absolute",
-        inset: 0,
-        zIndex: 2,
-        display: "grid",
-        placeContent: "center",
-        textAlign: "center",
-        color: "#fff",
-        fontFamily: "system-ui, sans-serif",
-        textShadow: "0 2px 8px #000",
-        pointerEvents: "none",
-      }}
-    >
-      <div style={{ fontSize: 52, fontWeight: 800, color: "#ff4d4d" }}>CRASHED</div>
-      <div style={{ fontSize: 18 }}>{reason}</div>
-      <div style={{ marginTop: 12 }}>Press R to restart</div>
-    </div>
+function stallProximity(airspeed: number, angleOfAttack: number, grounded: boolean) {
+  const aoaStall = THREE.MathUtils.clamp(angleOfAttack / STALL_AOA, 0, 1);
+  if (grounded) return aoaStall;
+  const speedStall = THREE.MathUtils.clamp(
+    (VLS_SPEED - airspeed) / (VLS_SPEED - STALL_SPEED),
+    0,
+    1,
   );
+  return Math.max(aoaStall, speedStall);
 }
 
 function DebugPanel() {
@@ -219,9 +357,11 @@ function DebugPanel() {
     localPlayerId,
     players,
   } = useFlightStore();
-  const stallRatio = THREE.MathUtils.clamp(angleOfAttack / STALL_AOA, 0, 1);
+  const stallRatio = stallProximity(airspeed, angleOfAttack, grounded);
   const stallPercent = Math.round(stallRatio * 100);
   const stallColor = stallRatio >= 0.85 ? "#ff5a5a" : stallRatio >= 0.6 ? "#ffcc33" : "#7dff9a";
+  const knots = Math.max(0, speedToKnots(airspeed));
+  const verticalFpm = unitsToFpm(verticalSpeed);
 
   return (
     <div
@@ -243,10 +383,16 @@ function DebugPanel() {
       <div>DEBUG · ⌘K to toggle</div>
       <div>{fps || "--"} FPS</div>
       <div>
-        {connection} · id {localPlayerId ?? "--"} · {players.length} pilots
+        {connection} · {gameClient.playerName} · id {localPlayerId ?? "--"} ·{" "}
+        {connection === "connected" ? players.length + 1 : players.length} pilots
       </div>
-      <div>{airspeed.toFixed(1)} u/s · {Math.round(throttle * 100)}% throttle</div>
-      <div>Vertical {verticalSpeed >= 0 ? "+" : ""}{verticalSpeed.toFixed(1)} u/s</div>
+      <div>
+        {Math.round(knots)} kt · {Math.round(throttle * 100)}% throttle
+      </div>
+      <div>
+        VS {STALL_SPEED_KT} · V1 {V1_SPEED_KT} · VR {VR_SPEED_KT} · V2 {V2_SPEED_KT} · VREF {VREF_SPEED_KT} · VMO {VMO_SPEED_KT}
+      </div>
+      <div>Vertical {verticalFpm >= 0 ? "+" : ""}{Math.round(verticalFpm)} ft/min</div>
       <div>AoA {angleOfAttack >= 0 ? "+" : ""}{(angleOfAttack * THREE.MathUtils.RAD2DEG).toFixed(1)}°</div>
       <div style={{ display: "flex", alignItems: "center", gap: 8, margin: "2px 0" }}>
         <span style={{ color: stallRatio >= 0.85 ? stallColor : undefined }}>
@@ -317,7 +463,7 @@ function FpsCounter() {
 // gradient plus a sun disc and glow. It is drawn first with depth writes off so
 // it always sits behind the scene, and it needs no texture assets.
 const SUN_DIRECTION = new THREE.Vector3(10, 20, 10).normalize();
-const SKY_RADIUS = 550;
+const SKY_RADIUS = 1000;
 const SKY_GEOMETRY = new THREE.SphereGeometry(1, 48, 32);
 const SKY_MATERIAL = new THREE.ShaderMaterial({
   side: THREE.BackSide,
@@ -389,7 +535,7 @@ function Skybox() {
 // Ground: a solid colour with an analytically anti-aliased grid. Drawing the
 // lines in the shader (rather than from a tiled texture) avoids the moiré and
 // shimmering that thin texture lines produce at grazing angles.
-const GROUND_GEOMETRY = new THREE.PlaneGeometry(WORLD_WIDTH, WORLD_VISIBLE_LENGTH);
+const GROUND_GEOMETRY = new THREE.PlaneGeometry(WORLD_SIZE, WORLD_SIZE);
 const GROUND_MATERIAL = new THREE.ShaderMaterial({
   uniforms: {
     groundColor: { value: new THREE.Color("#5c7a4f") },
@@ -448,13 +594,12 @@ const GROUND_MATERIAL = new THREE.ShaderMaterial({
 // the player can see the boundary without it hiding the sky. The bottom face
 // is dropped so it cannot z-fight with the ground plane.
 function createWorldWallGeometry() {
-  const box = new THREE.BoxGeometry(WORLD_WIDTH, WORLD_HEIGHT, WORLD_VISIBLE_LENGTH);
+  const box = new THREE.BoxGeometry(WORLD_SIZE, WORLD_HEIGHT, WORLD_SIZE);
   const index = box.getIndex()!;
-  // Drop the -Y face (ground is drawn separately) and both Z end caps, since
-  // the strip is endless.
-  const dropped = [box.groups[3], box.groups[4], box.groups[5]];
-  const kept = Array.from(index.array).filter((_, i) =>
-    !dropped.some((group) => i >= group.start && i < group.start + group.count),
+  // Drop the -Y face so it cannot z-fight with the ground plane.
+  const dropped = box.groups[3];
+  const kept = Array.from(index.array).filter(
+    (_, i) => i < dropped.start || i >= dropped.start + dropped.count,
   );
   box.setIndex(kept);
   box.clearGroups();
@@ -471,25 +616,13 @@ const WORLD_MATERIAL = new THREE.MeshBasicMaterial({
   toneMapped: false,
 });
 
-// Shared aircraft position, written every frame by the Aircraft so the world
-// shell can follow without going through the store.
-const aircraftPosition = new THREE.Vector3(0, SPAWN_Y, SPAWN_Z);
-
 function WorldCube({ debug }: { debug: boolean }) {
   const ref = useRef<THREE.Mesh>(null);
-  const shell = useRef<THREE.Group>(null);
-
-  // The ground and wall shell slide along with the aircraft so the strip never
-  // ends. The grid shader uses world-space XZ, so sliding the plane leaves the
-  // grid visually fixed.
-  useFrame(() => {
-    shell.current?.position.setZ(aircraftPosition.z);
-  });
 
   return (
     <>
       <Skybox />
-      <group ref={shell} position-z={SPAWN_Z}>
+      <group>
         <mesh
           geometry={GROUND_GEOMETRY}
           material={GROUND_MATERIAL}
@@ -504,22 +637,23 @@ function WorldCube({ debug }: { debug: boolean }) {
 }
 
 function WorldColliders() {
-  const halfWidth = WORLD_WIDTH / 2;
+  const halfSize = WORLD_SIZE / 2;
   const halfHeight = WORLD_HEIGHT / 2;
-  const halfDepth = WORLD_COLLIDER_LENGTH / 2;
 
   return (
     <RigidBody type="fixed" colliders={false} name="world">
       <CuboidCollider
         name="ground"
-        args={[halfWidth, 0.5, halfDepth]}
+        args={[halfSize, 0.5, halfSize]}
         position={[0, GROUND_Y - 0.5, 0]}
-        friction={0.9}
+        friction={0.18}
         restitution={0.04}
       />
-      <CuboidCollider name="ceiling" args={[halfWidth, 0.5, halfDepth]} position={[0, halfHeight + 0.5, 0]} />
-      <CuboidCollider name="wall-x" args={[0.5, halfHeight, halfDepth]} position={[halfWidth + 0.5, 0, 0]} />
-      <CuboidCollider name="wall-x" args={[0.5, halfHeight, halfDepth]} position={[-halfWidth - 0.5, 0, 0]} />
+      <CuboidCollider name="ceiling" args={[halfSize, 0.5, halfSize]} position={[0, halfHeight + 0.5, 0]} />
+      <CuboidCollider name="wall-x" args={[0.5, halfHeight, halfSize]} position={[halfSize + 0.5, 0, 0]} />
+      <CuboidCollider name="wall-x" args={[0.5, halfHeight, halfSize]} position={[-halfSize - 0.5, 0, 0]} />
+      <CuboidCollider name="wall-z" args={[halfSize, halfHeight, 0.5]} position={[0, 0, halfSize + 0.5]} />
+      <CuboidCollider name="wall-z" args={[halfSize, halfHeight, 0.5]} position={[0, 0, -halfSize - 0.5]} />
     </RigidBody>
   );
 }
@@ -604,11 +738,16 @@ function useKeyboard(): React.RefObject<KeyState> {
       // swallows the keyup for keys released while ⌘ is held, which would
       // otherwise leave them stuck "down".
       if (e.metaKey || e.ctrlKey) return;
-      if (FLIGHT_KEYS.has(e.code)) e.preventDefault();
-      keys.current[e.code] = true;
+      const code = e.code || (e.key === " " ? "Space" : "");
+      if (!captureFlightKeys) return;
+      if (FLIGHT_KEYS.has(code)) e.preventDefault();
+      if (code) keys.current[code] = true;
+      if (e.key === " ") keys.current.Space = true;
     };
     const up = (e: KeyboardEvent) => {
-      keys.current[e.code] = false;
+      const code = e.code || (e.key === " " ? "Space" : "");
+      if (code) keys.current[code] = false;
+      if (e.key === " ") keys.current.Space = false;
       if (e.code === "MetaLeft" || e.code === "MetaRight" || e.code === "ControlLeft" || e.code === "ControlRight") {
         keys.current = {};
       }
@@ -683,7 +822,7 @@ function Aircraft({ debug }: { debug: boolean }) {
   const modelRef = useRef<THREE.Group>(null);
   const explosionRef = useRef<ExplosionHandle>(null);
   const impactVelocity = useRef(new THREE.Vector3(0, 0, INITIAL_AIRSPEED));
-  const pitchTarget = useRef(0);
+  const pitchTarget = useRef(TRIM_AOA);
   const throttle = useRef(INITIAL_THROTTLE);
   const angleOfAttack = useRef(0);
   const telemetryElapsed = useRef(0);
@@ -694,6 +833,7 @@ function Aircraft({ debug }: { debug: boolean }) {
   const keys = useKeyboard();
 
   const publishPose = () => {
+    if (useFlightStore.getState().connection !== "connected") return;
     const body = bodyRef.current;
     if (!body) return;
     const velocity = body.linvel();
@@ -753,8 +893,13 @@ function Aircraft({ debug }: { debug: boolean }) {
       groundContacts.current += 1;
       const impactSpeed = Math.max(0, -velocity.y);
       if (impactSpeed > MAX_SAFE_LANDING_SPEED) {
-        crashPlane(`Hard landing at ${impactSpeed.toFixed(1)} u/s`, impactSpeed);
+        crashPlane(`Hard landing at ${Math.round(unitsToFpm(impactSpeed))} ft/min`, impactSpeed);
       }
+      return;
+    }
+
+    if (surface === "building" || surface === "building-debris") {
+      crashPlane("Collision with a building", velocity.length());
       return;
     }
 
@@ -813,22 +958,34 @@ function Aircraft({ debug }: { debug: boolean }) {
       );
     }
 
+    const forwardAirspeed = Math.max(0, linearVelocity.dot(forward));
+    const groundedNow = groundContacts.current > 0;
+    const rotateGate = groundedNow
+      ? THREE.MathUtils.smoothstep(STALL_SPEED * 0.7, VR_SPEED, forwardAirspeed)
+      : 1;
+    const pitchLimit = (groundedNow ? MAX_GROUND_PITCH : MAX_PITCH) * rotateGate;
     if (pitch) {
       pitchTarget.current = THREE.MathUtils.clamp(
         pitchTarget.current + pitch * PITCH_SPEED * PHYSICS_STEP,
-        -MAX_PITCH,
-        MAX_PITCH,
+        -pitchLimit,
+        pitchLimit,
       );
     } else {
       pitchTarget.current = THREE.MathUtils.damp(
         pitchTarget.current,
-        0,
+        groundedNow ? 0 : TRIM_AOA,
         0.65,
         PHYSICS_STEP,
       );
     }
+    if (groundedNow) {
+      pitchTarget.current = THREE.MathUtils.clamp(
+        pitchTarget.current,
+        -pitchLimit,
+        pitchLimit,
+      );
+    }
 
-    const forwardAirspeed = Math.max(0, linearVelocity.dot(forward));
     const controlAuthority = THREE.MathUtils.clamp(forwardAirspeed / CRUISE_SPEED, 0.15, 1.25);
     const mass = body.mass();
     const speed = linearVelocity.length();
@@ -841,20 +998,38 @@ function Aircraft({ debug }: { debug: boolean }) {
       MAX_PITCH,
     );
     angleOfAttack.current = aoa;
+    let liftCoeff = LIFT_BASE_ACCELERATION + LIFT_AOA_ACCELERATION * aoa;
+    if (!groundedNow && aoa > STALL_AOA) {
+      const stallDepth = THREE.MathUtils.clamp((aoa - STALL_AOA) / 0.12, 0, 1);
+      const stalledCoeff = LIFT_BASE_ACCELERATION + LIFT_AOA_ACCELERATION * STALL_AOA;
+      liftCoeff = THREE.MathUtils.lerp(stalledCoeff, stalledCoeff * 0.25, stallDepth);
+    }
     const liftAcceleration = THREE.MathUtils.clamp(
-      (forwardAirspeed / CRUISE_SPEED) ** 2 *
-        (LIFT_BASE_ACCELERATION + LIFT_AOA_ACCELERATION * aoa),
+      (forwardAirspeed / CRUISE_SPEED) ** 2 * liftCoeff,
       -MAX_LIFT_ACCELERATION,
       MAX_LIFT_ACCELERATION,
     );
+    // At VR, pulling back has to break the gear tripod and fly. Add a rotation
+    // lift assist so takeoff happens near the real 149 kt rotate speed.
+    const rotationLift =
+      groundedNow && pitch > 0
+        ? GRAVITY *
+          1.25 *
+          THREE.MathUtils.smoothstep(VR_SPEED * 0.97, VR_SPEED * 1.03, forwardAirspeed)
+        : 0;
     const sideslipSpeed = linearVelocity.dot(right);
 
     totalForce
       .copy(forward)
       .multiplyScalar(throttle.current * MAX_ENGINE_ACCELERATION * mass)
-      .addScaledVector(up, liftAcceleration * mass);
+      .addScaledVector(up, (liftAcceleration + rotationLift) * mass);
     if (speed > 0.001) {
       totalForce.addScaledVector(linearVelocity, -DRAG_COEFFICIENT * speed * mass);
+      if (groundedNow) {
+        // The gear colliders cannot roll, so keep contact friction low and
+        // apply a small constant rolling resistance instead.
+        totalForce.addScaledVector(linearVelocity, -(0.35 * mass) / speed);
+      }
     }
     totalForce.addScaledVector(right, -sideslipSpeed * SIDESLIP_DAMPING * mass);
     body.addForce(totalForce, true);
@@ -864,10 +1039,12 @@ function Aircraft({ debug }: { debug: boolean }) {
     const yawRate = angularVelocity.dot(up);
     const pitchError = pitchTarget.current - pitchAngle;
     const bankError = -turn * MAX_BANK - bankAngle;
+    const pitchGain = groundedNow ? 88 : 34;
+    const pitchDamp = groundedNow ? 14 : 9;
 
     totalTorque
       .copy(right)
-      .multiplyScalar((-pitchError * 34 - pitchRate * 9) * mass * controlAuthority)
+      .multiplyScalar((-pitchError * pitchGain - pitchRate * pitchDamp) * mass * controlAuthority)
       .addScaledVector(
         forward,
         (bankError * 22 - rollRate * 7) * mass * controlAuthority,
@@ -884,7 +1061,6 @@ function Aircraft({ debug }: { debug: boolean }) {
     if (!body) return;
     const velocity = body.linvel();
     const position = body.translation();
-    aircraftPosition.set(position.x, position.y, position.z);
 
     telemetryElapsed.current += delta;
     if (telemetryElapsed.current >= 0.2) {
@@ -901,7 +1077,8 @@ function Aircraft({ debug }: { debug: boolean }) {
 
     poseElapsed.current += delta;
     if (poseElapsed.current >= POSE_SEND_INTERVAL) {
-      poseElapsed.current = 0;
+      poseElapsed.current -= POSE_SEND_INTERVAL;
+      if (poseElapsed.current >= POSE_SEND_INTERVAL) poseElapsed.current = 0;
       publishPose();
     }
   });
@@ -913,8 +1090,9 @@ function Aircraft({ debug }: { debug: boolean }) {
         name="aircraft"
         colliders={false}
         position={[0, SPAWN_Y, SPAWN_Z]}
+        rotation={[-TRIM_AOA, 0, 0]}
         linearVelocity={[0, 0, INITIAL_AIRSPEED]}
-        linearDamping={0.015}
+        linearDamping={0.004}
         angularDamping={0.18}
         ccd
         canSleep={false}
@@ -937,9 +1115,9 @@ function Aircraft({ debug }: { debug: boolean }) {
         <CuboidCollider name="aircraft-wings" args={[6, 0.16, 1.25]} position={[0, 1.72, -5.2]} />
         <CuboidCollider name="aircraft-tailplane" args={[2.4, 0.12, 0.7]} position={[0, 2.25, -11.25]} />
         <CuboidCollider name="aircraft-tail" args={[0.14, 1.25, 1.1]} position={[0, 3, -11.2]} />
-        <BallCollider name="aircraft-gear" args={[0.22]} position={[-2.05, 0.59, -5.7]} friction={1.2} />
-        <BallCollider name="aircraft-gear" args={[0.22]} position={[2.05, 0.59, -5.7]} friction={1.2} />
-        <BallCollider name="aircraft-gear" args={[0.22]} position={[0, 0.59, -1.8]} friction={1.2} />
+        <BallCollider name="aircraft-gear" args={[0.22]} position={[-2.05, 0.59, -5.7]} friction={0.1} />
+        <BallCollider name="aircraft-gear" args={[0.22]} position={[2.05, 0.59, -5.7]} friction={0.1} />
+        <BallCollider name="aircraft-gear" args={[0.22]} position={[0, 0.59, -1.8]} friction={0.1} />
       </RigidBody>
       {debug && <LocalEntityBounds target={modelRef} />}
       <GroundShadow target={ref} />

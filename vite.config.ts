@@ -11,6 +11,16 @@ export default defineConfig({
     babel({ presets: [reactCompilerPreset()] })
   ],
   server: {
+    host: true,
+    proxy: {
+      '/ws': {
+        target: 'ws://127.0.0.1:8080',
+        ws: true,
+      },
+    },
+  },
+  preview: {
+    host: true,
     proxy: {
       '/ws': {
         target: 'ws://127.0.0.1:8080',

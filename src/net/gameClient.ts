@@ -2,22 +2,36 @@ import { useFlightStore } from "../flightStore";
 import {
   defaultWsUrl,
   finiteOrZero,
+  isJoin,
+  isLeave,
   isState,
   isWelcome,
-  randomPilotName,
+  loadPilotName,
+  loadPilotSession,
   type FlightPose,
   type ServerMessage,
 } from "./protocol";
-import { pushSnapshot, resetSnapshots } from "./snapshots";
+import { pushSnapshot, removePlayerSnapshots, resetSnapshots, upsertPlayerSnapshot } from "./snapshots";
 
 type ConnectionStatus = "disconnected" | "connecting" | "connected";
+
+type FlightWindow = Window & {
+  __flightClient?: GameClient;
+  __flightSocket?: WebSocket;
+};
+
+function flightWindow(): FlightWindow {
+  return window as FlightWindow;
+}
 
 class GameClient {
   private socket: WebSocket | null = null;
   private reconnectTimer: number | null = null;
   private attempts = 0;
   private stopped = true;
-  private readonly name = randomPilotName();
+  private generation = 0;
+  private readonly name = loadPilotName();
+  private readonly session = loadPilotSession();
   private lastPose: FlightPose | null = null;
 
   get playerName(): string {
@@ -25,25 +39,25 @@ class GameClient {
   }
 
   connect(): void {
+    const w = flightWindow();
+    if (w.__flightClient && w.__flightClient !== this) {
+      w.__flightClient.disconnect();
+    }
+    w.__flightClient = this;
     this.stopped = false;
+    if (
+      this.socket &&
+      (this.socket.readyState === WebSocket.OPEN || this.socket.readyState === WebSocket.CONNECTING)
+    ) {
+      return;
+    }
     this.open();
   }
 
   disconnect(): void {
     this.stopped = true;
-    if (this.reconnectTimer !== null) {
-      window.clearTimeout(this.reconnectTimer);
-      this.reconnectTimer = null;
-    }
-    const socket = this.socket;
-    this.socket = null;
-    if (socket) {
-      if (socket.readyState === WebSocket.CONNECTING) {
-        socket.addEventListener("open", () => socket.close());
-      } else if (socket.readyState === WebSocket.OPEN) {
-        socket.close();
-      }
-    }
+    this.clearReconnect();
+    this.closeSocket();
     resetSnapshots();
     useFlightStore.getState().setConnection("disconnected", null);
   }
@@ -78,36 +92,69 @@ class GameClient {
 
   private open(): void {
     if (this.stopped) return;
+    this.closeSocket();
+    const generation = this.generation;
     this.setStatus("connecting");
     const url = defaultWsUrl();
     const socket = new WebSocket(url);
     this.socket = socket;
+    const w = flightWindow();
+    if (w.__flightSocket && w.__flightSocket !== socket) {
+      try {
+        w.__flightSocket.close();
+      } catch {
+        /* already closed */
+      }
+    }
+    w.__flightSocket = socket;
 
     socket.addEventListener("open", () => {
-      if (this.stopped || this.socket !== socket) {
+      if (this.stopped || this.generation !== generation) {
         socket.close();
         return;
       }
       this.attempts = 0;
-      this.send({ type: "hello", name: this.name });
+      this.send({ type: "hello", name: this.name, session: this.session });
       if (this.lastPose) this.sendPose(this.lastPose);
     });
 
     socket.addEventListener("message", (event) => {
-      if (this.socket !== socket) return;
+      if (this.generation !== generation || this.socket !== socket) return;
       this.handleMessage(event.data);
     });
 
     socket.addEventListener("close", () => {
-      if (this.socket !== socket) return;
-      this.socket = null;
+      if (this.generation !== generation) return;
+      if (this.socket === socket) this.socket = null;
       this.setStatus("disconnected");
       this.scheduleReconnect();
     });
 
     socket.addEventListener("error", () => {
+      if (this.generation !== generation) return;
       socket.close();
     });
+  }
+
+  private closeSocket(): void {
+    this.generation += 1;
+    const socket = this.socket;
+    this.socket = null;
+    if (flightWindow().__flightSocket === socket) {
+      flightWindow().__flightSocket = undefined;
+    }
+    if (!socket) return;
+    try {
+      socket.close();
+    } catch {
+      /* already closed */
+    }
+  }
+
+  private clearReconnect(): void {
+    if (this.reconnectTimer === null) return;
+    window.clearTimeout(this.reconnectTimer);
+    this.reconnectTimer = null;
   }
 
   private handleMessage(raw: unknown): void {
@@ -119,13 +166,37 @@ class GameClient {
     }
 
     if (isWelcome(message)) {
+      const others = (message.players ?? []).filter(
+        (player) => player.id !== message.id,
+      );
       this.setStatus("connected", message.id);
+      if (others.length > 0) {
+        pushSnapshot({ type: "state", tick: message.tick, players: others });
+        useFlightStore.getState().applyServerState(others);
+      }
+      return;
+    }
+
+    if (isJoin(message)) {
+      if (message.player.id === useFlightStore.getState().localPlayerId) return;
+      upsertPlayerSnapshot(message.player, 0);
+      useFlightStore.getState().upsertPlayer(message.player);
+      return;
+    }
+
+    if (isLeave(message)) {
+      removePlayerSnapshots(message.id);
+      useFlightStore.getState().removePlayer(message.id);
       return;
     }
 
     if (isState(message)) {
-      pushSnapshot(message);
-      useFlightStore.getState().applyServerState(message.players);
+      const localId = useFlightStore.getState().localPlayerId;
+      const players = localId == null
+        ? message.players
+        : message.players.filter((player) => player.id !== localId);
+      pushSnapshot({ ...message, players });
+      useFlightStore.getState().applyServerState(players);
     }
   }
 
@@ -140,6 +211,7 @@ class GameClient {
 
   private scheduleReconnect(): void {
     if (this.stopped) return;
+    this.clearReconnect();
     this.attempts += 1;
     const delay = Math.min(250 * 2 ** Math.min(this.attempts, 4), 3000);
     this.reconnectTimer = window.setTimeout(() => {
@@ -150,3 +222,9 @@ class GameClient {
 }
 
 export const gameClient = new GameClient();
+
+if (import.meta.hot) {
+  import.meta.hot.dispose(() => {
+    gameClient.disconnect();
+  });
+}

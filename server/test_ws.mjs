@@ -40,7 +40,8 @@ async function connect() {
         },
       });
     });
-  return { ws, waitFor };
+  const hello = (name, session) => ws.send(JSON.stringify({ type: "hello", name, session }));
+  return { ws, waitFor, hello };
 }
 
 async function main() {
@@ -51,10 +52,11 @@ async function main() {
   }
 
   const a = await connect();
+  a.hello("Test-Pilot", "test-a");
   const welcome = await a.waitFor((msg) => msg.type === "welcome");
   if (!Number.isInteger(welcome.id)) throw new Error("welcome missing id");
+  if (!Array.isArray(welcome.players)) throw new Error("welcome missing players");
 
-  a.ws.send(JSON.stringify({ type: "hello", name: "Test-Pilot" }));
   a.ws.send(
     JSON.stringify({
       type: "pose",
@@ -100,13 +102,22 @@ async function main() {
   if (me.y === undefined || me.qw === undefined) throw new Error("state missing pose");
 
   const b = await connect();
+  b.hello("Chase-1", "test-b");
   const welcomeB = await b.waitFor((msg) => msg.type === "welcome");
+  if (!Number.isInteger(welcomeB.id)) throw new Error("second welcome missing id");
+  if (!welcomeB.players.some((p) => p.id === welcome.id && p.name === "Test-Pilot" && Math.abs(p.z - 88) < 0.01)) {
+    throw new Error("welcome did not include the existing pilot");
+  }
+
+  const join = await a.waitFor(
+    (msg) => msg.type === "join" && msg.player && msg.player.id === welcomeB.id && msg.player.name === "Chase-1",
+  );
+  if (!join.player) throw new Error("join missing player");
+
   const both = await b.waitFor(
     (msg) =>
       msg.type === "state" &&
-      msg.players.some(
-        (p) => p.id === welcome.id && Math.abs(p.z - 88) < 0.01 && p.name === "Test-Pilot",
-      ),
+      msg.players.some((p) => p.id === welcome.id && Math.abs(p.z - 88) < 0.01 && p.name === "Test-Pilot"),
     4000,
   );
   if (!both.players.some((p) => p.id === welcomeB.id)) {
@@ -145,6 +156,9 @@ async function main() {
   );
 
   a.ws.close();
+  const leave = await b.waitFor((msg) => msg.type === "leave" && msg.id === welcome.id);
+  if (leave.id !== welcome.id) throw new Error("leave missing id");
+
   b.ws.close();
   console.log("protocol test passed", {
     playerA: welcome.id,

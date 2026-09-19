@@ -13,14 +13,22 @@
 #include <algorithm>
 #include <cctype>
 #include <cerrno>
+#include <chrono>
 #include <cstring>
 #include <iostream>
 #include <stdexcept>
 #include <utility>
 
+#ifndef MSG_NOSIGNAL
+#define MSG_NOSIGNAL 0
+#endif
+
 namespace {
 constexpr std::string_view kWsMagic = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
 constexpr size_t kMaxIncoming = 64 * 1024;
+constexpr auto kPingInterval = std::chrono::seconds(2);
+constexpr auto kIdleTimeout = std::chrono::seconds(8);
+constexpr auto kHelloTimeout = std::chrono::seconds(5);
 
 void set_nonblock(int fd) {
   const int flags = fcntl(fd, F_GETFL, 0);
@@ -94,6 +102,7 @@ void WebSocketServer::bind_and_listen() {
 }
 
 void WebSocketServer::poll_once(int timeout_ms) {
+  reap_idle();
   if (pollfds_.empty()) rebuild_pollfds();
   const int ready = ::poll(pollfds_.data(), pollfds_.size(), timeout_ms);
   if (ready < 0) {
@@ -151,6 +160,12 @@ void WebSocketServer::close_client(Id id) {
   drop(it->second, true);
 }
 
+void WebSocketServer::mark_joined(Id id) {
+  auto it = clients_.find(id);
+  if (it == clients_.end()) return;
+  it->second.joined = true;
+}
+
 void WebSocketServer::accept_new() {
   while (true) {
     sockaddr_in addr{};
@@ -164,10 +179,14 @@ void WebSocketServer::accept_new() {
     set_nonblock(fd);
     int yes = 1;
     setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &yes, sizeof(yes));
+#ifdef SO_NOSIGPIPE
+    setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &yes, sizeof(yes));
+#endif
 
     Client client;
     client.id = next_id_++;
     client.fd = fd;
+    mark_activity(client);
     clients_.emplace(client.id, std::move(client));
     rebuild_pollfds();
   }
@@ -187,6 +206,7 @@ void WebSocketServer::read_client(Client& client) {
       return;
     }
     client.incoming.append(buffer, static_cast<size_t>(n));
+    mark_activity(client);
     if (client.incoming.size() > kMaxIncoming) {
       drop(client, true);
       return;
@@ -194,8 +214,10 @@ void WebSocketServer::read_client(Client& client) {
   }
 
   if (!client.handshake) {
+    const Id id = client.id;
     complete_handshake(client);
-    if (!client.handshake) return;
+    auto it = clients_.find(id);
+    if (it == clients_.end() || !it->second.handshake) return;
   }
 
   while (true) {
@@ -208,8 +230,10 @@ void WebSocketServer::read_client(Client& client) {
       return;
     }
     if (is_ping) {
+      const Id id = client.id;
       queue_frame(client, 0xA, message);
       write_client(client);
+      if (clients_.find(id) == clients_.end()) return;
       continue;
     }
     if (on_message) on_message(client.id, message);
@@ -272,6 +296,8 @@ void WebSocketServer::complete_handshake(Client& client) {
       accept + "\r\n\r\n";
   write_client(client);
   client.handshake = true;
+  client.handshake_at = std::chrono::steady_clock::now();
+  mark_activity(client);
   std::cout << "[server] client " << client.id << " connected" << std::endl;
   if (on_open) on_open(client.id);
 }
@@ -329,7 +355,10 @@ bool WebSocketServer::extract_frame(Client& client, std::string& message, bool& 
     is_ping = true;
     return true;
   }
-  if (opcode == 0xA) return extract_frame(client, message, is_close, is_ping);
+  if (opcode == 0xA) {
+    mark_activity(client);
+    return extract_frame(client, message, is_close, is_ping);
+  }
   if (opcode != 0x1 && opcode != 0x2) return extract_frame(client, message, is_close, is_ping);
   return true;
 }
@@ -362,6 +391,47 @@ void WebSocketServer::drop(Client& client, bool notify) {
   if (notify) {
     std::cout << "[server] client " << id << " disconnected" << std::endl;
     if (on_close) on_close(id);
+  }
+}
+
+void WebSocketServer::mark_activity(Client& client) {
+  client.last_activity = std::chrono::steady_clock::now();
+}
+
+void WebSocketServer::reap_idle() {
+  const auto now = std::chrono::steady_clock::now();
+  std::vector<Id> dead;
+  std::vector<Id> ping;
+  for (auto& [id, client] : clients_) {
+    if (client.handshake && !client.joined && now - client.handshake_at > kHelloTimeout) {
+      dead.push_back(id);
+      continue;
+    }
+    if (now - client.last_activity > kIdleTimeout) {
+      dead.push_back(id);
+      continue;
+    }
+    if (!client.handshake || !client.joined || client.closing) continue;
+    if (now - client.last_ping >= kPingInterval && now - client.last_activity >= kPingInterval) {
+      ping.push_back(id);
+    }
+  }
+  for (Id id : ping) {
+    auto it = clients_.find(id);
+    if (it == clients_.end()) continue;
+    queue_frame(it->second, 0x9, {});
+    it->second.last_ping = now;
+    write_client(it->second);
+  }
+  for (Id id : dead) {
+    auto it = clients_.find(id);
+    if (it == clients_.end()) continue;
+    if (it->second.handshake && !it->second.joined) {
+      std::cout << "[server] client " << id << " hello timeout" << std::endl;
+    } else {
+      std::cout << "[server] client " << id << " idle timeout" << std::endl;
+    }
+    drop(it->second, true);
   }
 }
 

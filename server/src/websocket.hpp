@@ -1,5 +1,6 @@
 #pragma once
 
+#include <chrono>
 #include <cstdint>
 #include <functional>
 #include <string>
@@ -24,6 +25,7 @@ class WebSocketServer {
   void poll_once(int timeout_ms);
   void send_text(Id id, std::string_view message);
   void close_client(Id id);
+  void mark_joined(Id id);
 
   std::function<void(Id)> on_open;
   std::function<void(Id)> on_close;
@@ -36,9 +38,13 @@ class WebSocketServer {
     Id id = 0;
     int fd = -1;
     bool handshake = false;
+    bool joined = false;
     bool closing = false;
     std::string incoming;
     std::string outgoing;
+    std::chrono::steady_clock::time_point last_activity{};
+    std::chrono::steady_clock::time_point last_ping{};
+    std::chrono::steady_clock::time_point handshake_at{};
   };
 
   void accept_new();
@@ -49,6 +55,8 @@ class WebSocketServer {
   void queue_frame(Client& client, uint8_t opcode, std::string_view payload);
   void drop(Client& client, bool notify);
   void rebuild_pollfds();
+  void reap_idle();
+  void mark_activity(Client& client);
 
   int port_ = 8080;
   int listen_fd_ = -1;
