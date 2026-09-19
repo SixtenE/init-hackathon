@@ -35,8 +35,15 @@ class GameClient {
       window.clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
     }
-    this.socket?.close();
+    const socket = this.socket;
     this.socket = null;
+    if (socket) {
+      if (socket.readyState === WebSocket.CONNECTING) {
+        socket.addEventListener("open", () => socket.close());
+      } else if (socket.readyState === WebSocket.OPEN) {
+        socket.close();
+      }
+    }
     resetSnapshots();
     useFlightStore.getState().setConnection("disconnected", null);
   }
@@ -77,7 +84,10 @@ class GameClient {
     this.socket = socket;
 
     socket.addEventListener("open", () => {
-      if (this.socket !== socket) return;
+      if (this.stopped || this.socket !== socket) {
+        socket.close();
+        return;
+      }
       this.attempts = 0;
       this.send({ type: "hello", name: this.name });
       if (this.lastPose) this.sendPose(this.lastPose);
