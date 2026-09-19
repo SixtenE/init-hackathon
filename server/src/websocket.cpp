@@ -455,7 +455,6 @@ void WebSocketServer::write_client(Client& client) {
       return;
     }
     client.outgoing.erase(0, static_cast<size_t>(n));
-    mark_activity(client);
   }
   if (clients_.find(id) == clients_.end()) return;
   if (client.http && !has_pending_write(client)) {

@@ -2,6 +2,7 @@
 // Smoke-test static file serving and the C++ pose-relay protocol.
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
+import crypto from "node:crypto";
 import net from "node:net";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -71,6 +72,95 @@ function rawHttp(host, port, request) {
       reject(new Error("raw HTTP request timed out"));
     });
   });
+}
+
+function maskTextFrame(payload) {
+  const data = Buffer.from(payload, "utf8");
+  const mask = crypto.randomBytes(4);
+  const header = Buffer.alloc(data.length < 126 ? 6 : 8);
+  header[0] = 0x81;
+  if (data.length < 126) {
+    header[1] = 0x80 | data.length;
+    mask.copy(header, 2);
+  } else {
+    header[1] = 0x80 | 126;
+    header.writeUInt16BE(data.length, 2);
+    mask.copy(header, 4);
+  }
+  const masked = Buffer.alloc(data.length);
+  for (let i = 0; i < data.length; i++) masked[i] = data[i] ^ mask[i % 4];
+  return Buffer.concat([header, masked]);
+}
+
+function openRawWs(url) {
+  const parsed = new URL(url);
+  const key = crypto.randomBytes(16).toString("base64");
+  return new Promise((resolve, reject) => {
+    const sock = net.connect({ host: parsed.hostname, port: Number(parsed.port) || 80 });
+    let buf = Buffer.alloc(0);
+    const fail = (err) => {
+      sock.destroy();
+      reject(err);
+    };
+    sock.setTimeout(4000, () => fail(new Error("raw websocket handshake timed out")));
+    sock.on("error", fail);
+    sock.on("connect", () => {
+      sock.write(
+        `GET /ws HTTP/1.1\r\nHost: ${parsed.host}\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: ${key}\r\nSec-WebSocket-Version: 13\r\n\r\n`,
+      );
+    });
+    sock.on("data", (chunk) => {
+      buf = Buffer.concat([buf, chunk]);
+      const end = buf.indexOf("\r\n\r\n");
+      if (end < 0) return;
+      sock.setTimeout(0);
+      sock.removeAllListeners("data");
+      sock.removeAllListeners("error");
+      sock.pause();
+      const header = buf.subarray(0, end).toString("utf8");
+      if (!header.startsWith("HTTP/1.1 101")) {
+        fail(new Error(`upgrade failed: ${header.split("\r\n")[0]}`));
+        return;
+      }
+      resolve(sock);
+    });
+  });
+}
+
+function sendJson(sock, payload) {
+  sock.write(maskTextFrame(JSON.stringify(payload)));
+}
+
+const GHOST_POSE = {
+  type: "pose",
+  seq: 1,
+  spawn: 1,
+  x: 9,
+  y: -12,
+  z: 40,
+  qx: 0,
+  qy: 0,
+  qz: 0,
+  qw: 1,
+  vx: 0,
+  vy: 0,
+  vz: 0,
+  throttle: 0.2,
+  airspeed: 12,
+  verticalSpeed: 0,
+  angleOfAttack: 0,
+  grounded: false,
+  crashed: false,
+};
+
+async function expectPlayerGone(observer, id, timeoutMs, label) {
+  await observer.waitFor((msg) => msg.type === "leave" && msg.id === id, timeoutMs);
+  const deadline = Date.now() + 2000;
+  while (Date.now() < deadline) {
+    const msg = await observer.waitFor((m) => m.type === "state" && Array.isArray(m.players), deadline - Date.now());
+    if (!msg.players.some((p) => p.id === id)) return;
+  }
+  throw new Error(`${label}: player ${id} still in snapshots after leave`);
 }
 
 async function waitForHealth(httpBase, timeoutMs = 8000) {
@@ -298,6 +388,55 @@ async function testProtocol(url) {
   return { playerA: welcome.id, playerB: welcomeB.id, airspeed: me.airspeed, altitude: me.y, grounded: me.grounded };
 }
 
+async function testGhostConnections(url) {
+  const observer = await connect(url);
+  observer.hello("Observer", "ghost-obs");
+  await observer.waitFor((msg) => msg.type === "welcome");
+
+  const clean = await connect(url);
+  clean.hello("Ghost-Clean", "ghost-clean");
+  const cleanWelcome = await clean.waitFor((msg) => msg.type === "welcome");
+  await observer.waitFor(
+    (msg) => msg.type === "join" && msg.player && msg.player.id === cleanWelcome.id,
+  );
+  clean.ws.close();
+  await expectPlayerGone(observer, cleanWelcome.id, 2000, "clean websocket close");
+
+  const abortSock = await openRawWs(url);
+  sendJson(abortSock, { type: "hello", name: "Ghost-Abort", session: "ghost-abort" });
+  sendJson(abortSock, GHOST_POSE);
+  const abortJoin = await observer.waitFor(
+    (msg) => msg.type === "join" && msg.player && msg.player.name === "Ghost-Abort",
+  );
+  abortSock.destroy();
+  await expectPlayerGone(observer, abortJoin.player.id, 2000, "abrupt TCP drop");
+
+  const hungSock = await openRawWs(url);
+  sendJson(hungSock, { type: "hello", name: "Ghost-Hung", session: "ghost-hung" });
+  sendJson(hungSock, GHOST_POSE);
+  const hungJoin = await observer.waitFor(
+    (msg) => msg.type === "join" && msg.player && msg.player.name === "Ghost-Hung",
+  );
+  hungSock.pause();
+  await expectPlayerGone(observer, hungJoin.player.id, 12000, "half-open / left-page hang");
+  hungSock.destroy();
+
+  const idle = await connect(url);
+  idle.hello("Still-Here", "ghost-idle");
+  const idleWelcome = await idle.waitFor((msg) => msg.type === "welcome");
+  await observer.waitFor(
+    (msg) => msg.type === "join" && msg.player && msg.player.id === idleWelcome.id,
+  );
+  await new Promise((resolve) => setTimeout(resolve, 9000));
+  const stillHere = await observer.waitFor((msg) => msg.type === "state" && Array.isArray(msg.players), 2000);
+  if (!stillHere.players.some((p) => p.id === idleWelcome.id)) {
+    throw new Error("live idle client was kicked as a ghost");
+  }
+
+  idle.ws.close();
+  observer.ws.close();
+}
+
 async function main() {
   const { url, httpBase, child } = await ensureServer();
   const cleanup = () => {
@@ -318,7 +457,8 @@ async function main() {
 
     await testStaticFiles(httpBase);
     const protocol = await testProtocol(url);
-    console.log("static + protocol tests passed", {
+    await testGhostConnections(url);
+    console.log("static + protocol + ghost tests passed", {
       playerA: protocol.playerA,
       playerB: protocol.playerB,
       airspeed: protocol.airspeed.toFixed(2),
