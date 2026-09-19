@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import type { PlayerState } from "./net/protocol";
 
 type FlightTelemetry = {
   airspeed: number;
@@ -9,17 +10,25 @@ type FlightTelemetry = {
   position: { x: number; y: number; z: number };
 };
 
+export type ConnectionStatus = "disconnected" | "connecting" | "connected";
+
 type FlightState = FlightTelemetry & {
   debug: boolean;
   fps: number;
   crashed: boolean;
   crashReason: string | null;
   resetVersion: number;
+  connection: ConnectionStatus;
+  localPlayerId: number | null;
+  players: PlayerState[];
+  playerIds: number[];
   toggleDebug: () => void;
   crash: (reason: string) => void;
   resetFlight: () => void;
   setFps: (fps: number) => void;
   setTelemetry: (telemetry: FlightTelemetry) => void;
+  setConnection: (connection: ConnectionStatus, playerId?: number | null) => void;
+  applyServerState: (players: PlayerState[]) => void;
 };
 
 export const useFlightStore = create<FlightState>((set) => ({
@@ -34,6 +43,10 @@ export const useFlightStore = create<FlightState>((set) => ({
   crashed: false,
   crashReason: null,
   resetVersion: 0,
+  connection: "disconnected",
+  localPlayerId: null,
+  players: [],
+  playerIds: [],
   toggleDebug: () => set((state) => ({ debug: !state.debug })),
   crash: (reason) => set((state) => state.crashed ? state : {
     crashed: true,
@@ -52,4 +65,20 @@ export const useFlightStore = create<FlightState>((set) => ({
   })),
   setFps: (fps) => set({ fps }),
   setTelemetry: (telemetry) => set(telemetry),
+  setConnection: (connection, playerId) =>
+    set((state) => ({
+      connection,
+      localPlayerId: playerId === undefined ? state.localPlayerId : playerId,
+      ...(connection === "disconnected" ? { players: [], playerIds: [] } : {}),
+    })),
+  applyServerState: (players) =>
+    set((state) => {
+      const ids = players.map((player) => player.id);
+      const idsChanged =
+        ids.length !== state.playerIds.length || ids.some((id, index) => id !== state.playerIds[index]);
+      return {
+        players,
+        playerIds: idsChanged ? ids : state.playerIds,
+      };
+    }),
 }));

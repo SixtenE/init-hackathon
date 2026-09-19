@@ -1,5 +1,6 @@
 import { lazy, Suspense, useEffect, useRef } from "react";
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
+import { Html } from "@react-three/drei";
 import {
   BallCollider,
   CapsuleCollider,
@@ -12,6 +13,9 @@ import {
 } from "@react-three/rapier";
 import * as THREE from "three";
 import { useFlightStore } from "./flightStore";
+import { gameClient } from "./net/gameClient";
+import { samplePlayer } from "./net/snapshots";
+import { useGameConnection } from "./net/useGameConnection";
 import { Explosion, type ExplosionHandle } from "./vfx/Explosion";
 
 const AirbusA320 = lazy(() =>
@@ -74,6 +78,7 @@ const SIDESLIP_DAMPING = 2.4;
 const MAX_SAFE_LANDING_SPEED = 5;
 const MAX_SAFE_WALL_IMPACT = 5;
 const PHYSICS_STEP = 1 / 60;
+const POSE_SEND_INTERVAL = 1 / 20;
 
 // A projected blob shadow communicates altitude without the cost of enabling
 // shadow maps for the detailed aircraft model. Painted into the ground shader
@@ -91,6 +96,7 @@ const MAX_DPR = 1.5;
 export default function App() {
   const debug = useFlightStore((state) => state.debug);
   const resetVersion = useFlightStore((state) => state.resetVersion);
+  useGameConnection();
   useEffect(() => {
     const handleShortcut = (event: KeyboardEvent) => {
       if ((event.metaKey || event.ctrlKey) && event.code === "KeyK") {
@@ -98,7 +104,10 @@ export default function App() {
         if (!event.repeat) useFlightStore.getState().toggleDebug();
       } else if (event.code === "KeyR" && useFlightStore.getState().crashed) {
         event.preventDefault();
-        if (!event.repeat) useFlightStore.getState().resetFlight();
+        if (!event.repeat) {
+          useFlightStore.getState().resetFlight();
+          gameClient.sendReset();
+        }
       }
     };
     window.addEventListener("keydown", handleShortcut);
@@ -107,6 +116,7 @@ export default function App() {
 
   return (
     <div style={{ width: "100vw", height: "100vh", position: "relative" }}>
+      <ConnectionBadge />
       <DebugPanel />
       <CrashOverlay />
       <Canvas
@@ -128,9 +138,41 @@ export default function App() {
             <WorldCube debug={debug} />
             <WorldColliders />
             <Aircraft key={resetVersion} debug={debug} />
+            <RemoteFleet debug={debug} />
           </Physics>
         </Suspense>
       </Canvas>
+    </div>
+  );
+}
+
+function ConnectionBadge() {
+  const connection = useFlightStore((state) => state.connection);
+  const playerCount = useFlightStore((state) => state.playerIds.length);
+  const live = connection === "connected";
+
+  return (
+    <div
+      style={{
+        position: "absolute",
+        top: 8,
+        right: 8,
+        zIndex: 3,
+        padding: "6px 10px",
+        fontFamily: "system-ui, sans-serif",
+        fontSize: 13,
+        color: live ? "#d7ffe6" : "#ffe9c2",
+        background: live ? "rgba(0, 20, 8, 0.55)" : "rgba(28, 16, 0, 0.55)",
+        border: live ? "1px solid rgba(120, 255, 170, 0.35)" : "1px solid rgba(255, 196, 120, 0.4)",
+        borderRadius: 6,
+        pointerEvents: "none",
+      }}
+    >
+      {live
+        ? `LIVE · ${playerCount} ${playerCount === 1 ? "pilot" : "pilots"}`
+        : connection === "connecting"
+          ? "Connecting to game server"
+          : "Offline · physics still local"}
     </div>
   );
 }
@@ -163,7 +205,20 @@ function CrashOverlay() {
 }
 
 function DebugPanel() {
-  const { debug, fps, airspeed, throttle, verticalSpeed, angleOfAttack, grounded, crashed, position } = useFlightStore();
+  const {
+    debug,
+    fps,
+    airspeed,
+    throttle,
+    verticalSpeed,
+    angleOfAttack,
+    grounded,
+    crashed,
+    position,
+    connection,
+    localPlayerId,
+    players,
+  } = useFlightStore();
   const stallRatio = THREE.MathUtils.clamp(angleOfAttack / STALL_AOA, 0, 1);
   const stallPercent = Math.round(stallRatio * 100);
   const stallColor = stallRatio >= 0.85 ? "#ff5a5a" : stallRatio >= 0.6 ? "#ffcc33" : "#7dff9a";
@@ -187,6 +242,9 @@ function DebugPanel() {
     >
       <div>DEBUG · ⌘K to toggle</div>
       <div>{fps || "--"} FPS</div>
+      <div>
+        {connection} · id {localPlayerId ?? "--"} · {players.length} pilots
+      </div>
       <div>{airspeed.toFixed(1)} u/s · {Math.round(throttle * 100)}% throttle</div>
       <div>Vertical {verticalSpeed >= 0 ? "+" : ""}{verticalSpeed.toFixed(1)} u/s</div>
       <div>AoA {angleOfAttack >= 0 ? "+" : ""}{(angleOfAttack * THREE.MathUtils.RAD2DEG).toFixed(1)}°</div>
@@ -213,7 +271,7 @@ function DebugPanel() {
         </div>
       </div>
       <div>X {position.x.toFixed(1)} · Y {position.y.toFixed(1)} · Z {position.z.toFixed(1)}</div>
-      <div>{crashed ? "CRASHED" : grounded ? "GROUND" : "AIRBORNE"} · Rapier colliders visible</div>
+      <div>{crashed ? "CRASHED" : grounded ? "GROUND" : "AIRBORNE"} · client physics</div>
       <div>W/S throttle · A/D turn · Space/Shift pitch</div>
     </div>
   );
@@ -629,9 +687,42 @@ function Aircraft({ debug }: { debug: boolean }) {
   const throttle = useRef(INITIAL_THROTTLE);
   const angleOfAttack = useRef(0);
   const telemetryElapsed = useRef(0);
+  const poseElapsed = useRef(POSE_SEND_INTERVAL);
+  const poseSeq = useRef(0);
   const groundContacts = useRef(0);
   const crashed = useRef(false);
   const keys = useKeyboard();
+
+  const publishPose = () => {
+    const body = bodyRef.current;
+    if (!body) return;
+    const velocity = body.linvel();
+    const position = body.translation();
+    const rotation = body.rotation();
+    const flight = useFlightStore.getState();
+    poseSeq.current += 1;
+    gameClient.sendPose({
+      seq: poseSeq.current,
+      spawn: flight.resetVersion,
+      x: position.x,
+      y: position.y,
+      z: position.z,
+      qx: rotation.x,
+      qy: rotation.y,
+      qz: rotation.z,
+      qw: rotation.w,
+      vx: velocity.x,
+      vy: velocity.y,
+      vz: velocity.z,
+      throttle: throttle.current,
+      airspeed: Math.hypot(velocity.x, velocity.y, velocity.z),
+      verticalSpeed: velocity.y,
+      angleOfAttack: angleOfAttack.current,
+      grounded: groundContacts.current > 0,
+      crashed: crashed.current,
+      crashReason: flight.crashReason,
+    });
+  };
 
   const crashPlane = (reason: string, impactSpeed: number) => {
     if (crashed.current) return;
@@ -651,6 +742,7 @@ function Aircraft({ debug }: { debug: boolean }) {
     }
     explosionRef.current?.trigger(explosionPosition);
     useFlightStore.getState().crash(reason);
+    publishPose();
   };
 
   const handleCollisionEnter = (event: CollisionEnterPayload) => {
@@ -806,6 +898,12 @@ function Aircraft({ debug }: { debug: boolean }) {
       });
       telemetryElapsed.current = 0;
     }
+
+    poseElapsed.current += delta;
+    if (poseElapsed.current >= POSE_SEND_INTERVAL) {
+      poseElapsed.current = 0;
+      publishPose();
+    }
   });
 
   return (
@@ -847,6 +945,84 @@ function Aircraft({ debug }: { debug: boolean }) {
       <GroundShadow target={ref} />
       <ChaseCamera target={ref} body={bodyRef} />
       <Explosion ref={explosionRef} groundY={GROUND_Y} />
+    </>
+  );
+}
+
+function RemoteFleet({ debug }: { debug: boolean }) {
+  const localPlayerId = useFlightStore((state) => state.localPlayerId);
+  const playerIds = useFlightStore((state) => state.playerIds);
+  if (localPlayerId == null) return null;
+  return (
+    <>
+      {playerIds.map((id) =>
+        id === localPlayerId ? null : (
+          <RemoteAircraft key={id} playerId={id} debug={debug} />
+        ),
+      )}
+    </>
+  );
+}
+
+function PilotLabel({ playerId }: { playerId: number }) {
+  const name = useFlightStore(
+    (state) => state.players.find((player) => player.id === playerId)?.name ?? `Pilot-${playerId}`,
+  );
+  return (
+    <Html position={[0, 7.5, -6]} center distanceFactor={40} style={{ pointerEvents: "none" }}>
+      <div
+        style={{
+          padding: "2px 8px",
+          borderRadius: 4,
+          background: "rgba(0, 0, 0, 0.55)",
+          color: "#fff",
+          fontFamily: "system-ui, sans-serif",
+          fontSize: 12,
+          whiteSpace: "nowrap",
+        }}
+      >
+        {name}
+      </div>
+    </Html>
+  );
+}
+
+function RemoteAircraft({ playerId, debug }: { playerId: number; debug: boolean }) {
+  const bodyRef = useRef<THREE.Group>(null);
+  const modelRef = useRef<THREE.Group>(null);
+  const explosionRef = useRef<ExplosionHandle>(null);
+  const crashed = useRef(false);
+  const spawn = useFlightStore(
+    (state) => state.players.find((player) => player.id === playerId)?.spawn ?? 0,
+  );
+
+  useFrame(() => {
+    const pose = samplePlayer(playerId);
+    const body = bodyRef.current;
+    if (!pose || !body) return;
+
+    body.position.set(pose.x, pose.y, pose.z);
+    body.quaternion.set(pose.qx, pose.qy, pose.qz, pose.qw);
+
+    if (pose.crashed && !crashed.current) {
+      crashed.current = true;
+      const explosionPosition = new THREE.Vector3(0, 2, -5.5);
+      body.localToWorld(explosionPosition);
+      explosionRef.current?.trigger(explosionPosition);
+    }
+    if (!pose.crashed) crashed.current = false;
+  });
+
+  return (
+    <>
+      <group ref={bodyRef} position={[0, SPAWN_Y, SPAWN_Z]}>
+        <group ref={modelRef}>
+          <AirbusA320 />
+        </group>
+        <PilotLabel playerId={playerId} />
+      </group>
+      {debug && <LocalEntityBounds target={modelRef} />}
+      <Explosion key={spawn} ref={explosionRef} groundY={GROUND_Y} />
     </>
   );
 }
