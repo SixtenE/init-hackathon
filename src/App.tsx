@@ -224,11 +224,11 @@ export default function App() {
             >
               <WorldCube debug={debug} />
               <WorldColliders />
-              <group key={resetVersion}>
+              <group key={`buildings-${resetVersion}`}>
                 <CrumblingBuilding origin={BUILDING_ORIGIN_A} />
                 <CrumblingBuilding origin={BUILDING_ORIGIN_B} />
               </group>
-              <Aircraft key={resetVersion} debug={debug} />
+              <Aircraft key={`aircraft-${resetVersion}`} debug={debug} />
               <RemoteFleet debug={debug} />
               <SceneReady onReady={handleSceneReady} />
             </Physics>
