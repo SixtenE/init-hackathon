@@ -1,17 +1,11 @@
 import { lazy, Suspense, useEffect, useRef } from "react";
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
-import {
-  BallCollider,
-  CapsuleCollider,
-  CuboidCollider,
-  Physics,
-  RigidBody,
-  useBeforePhysicsStep,
-  type CollisionEnterPayload,
-  type RapierRigidBody,
-} from "@react-three/rapier";
+import { Html } from "@react-three/drei";
 import * as THREE from "three";
 import { useFlightStore } from "./flightStore";
+import { gameClient } from "./net/gameClient";
+import { useGameConnection } from "./net/useGameConnection";
+import { samplePlayer } from "./net/snapshots";
 import { Explosion, type ExplosionHandle } from "./vfx/Explosion";
 
 const AirbusA320 = lazy(() =>
@@ -45,35 +39,8 @@ const GEAR_BOTTOM_OFFSET = 0.59 - 0.22;
 const SPAWN_Y = GROUND_Y + GEAR_BOTTOM_OFFSET + 0.02;
 // Length of the visible ground/wall shell that follows the aircraft.
 const WORLD_VISIBLE_LENGTH = 1600;
-// Effectively infinite extent for the static ground/ceiling/side colliders.
-const WORLD_COLLIDER_LENGTH = 1_000_000;
 
-// Flight control tuning (units per second / radians per second).
-const MAX_BANK = 0.62;
-
-// Lightweight flight dynamics. Units are intentionally game-scaled, while
-// the relationships between thrust, drag, lift, and gravity remain physical.
-const GRAVITY = 9.81;
-// The aircraft starts parked on the runway: no speed, engines idle.
-const INITIAL_AIRSPEED = 0;
-const CRUISE_SPEED = 16;
-const INITIAL_THROTTLE = 0;
-const THROTTLE_RATE = 0.45;
-const MAX_ENGINE_ACCELERATION = 12;
-const DRAG_COEFFICIENT = 0.026;
-// Level wings only make a fraction of weight, so accelerating with the stick
-// neutral stays on the runway. The rest of the lift comes from angle of attack.
-const LIFT_BASE_ACCELERATION = GRAVITY * 0.18;
-const LIFT_AOA_ACCELERATION = GRAVITY * 3.6;
-const MAX_LIFT_ACCELERATION = GRAVITY * 2.4;
-const PITCH_SPEED = 0.7;
-const MAX_PITCH = 0.55;
-// Critical angle of attack. The stall meter fills as AoA approaches this.
 const STALL_AOA = 0.42;
-const SIDESLIP_DAMPING = 2.4;
-const MAX_SAFE_LANDING_SPEED = 5;
-const MAX_SAFE_WALL_IMPACT = 5;
-const PHYSICS_STEP = 1 / 60;
 
 // A projected blob shadow communicates altitude without the cost of enabling
 // shadow maps for the detailed aircraft model. Painted into the ground shader
@@ -90,7 +57,8 @@ const MAX_DPR = 1.5;
 
 export default function App() {
   const debug = useFlightStore((state) => state.debug);
-  const resetVersion = useFlightStore((state) => state.resetVersion);
+  useGameConnection();
+
   useEffect(() => {
     const handleShortcut = (event: KeyboardEvent) => {
       if ((event.metaKey || event.ctrlKey) && event.code === "KeyK") {
@@ -98,7 +66,7 @@ export default function App() {
         if (!event.repeat) useFlightStore.getState().toggleDebug();
       } else if (event.code === "KeyR" && useFlightStore.getState().crashed) {
         event.preventDefault();
-        if (!event.repeat) useFlightStore.getState().resetFlight();
+        if (!event.repeat) gameClient.sendReset();
       }
     };
     window.addEventListener("keydown", handleShortcut);
@@ -107,6 +75,7 @@ export default function App() {
 
   return (
     <div style={{ width: "100vw", height: "100vh", position: "relative" }}>
+      <ConnectionOverlay />
       <DebugPanel />
       <CrashOverlay />
       <Canvas
@@ -118,19 +87,62 @@ export default function App() {
         <ambientLight intensity={0.6} />
         <directionalLight position={[10, 20, 10]} intensity={1.2} />
         <Suspense fallback={null}>
-          <Physics
-            gravity={[0, -GRAVITY, 0]}
-            timeStep={PHYSICS_STEP}
-            maxCcdSubsteps={2}
-            debug={debug}
-            colliders={false}
-          >
-            <WorldCube debug={debug} />
-            <WorldColliders />
-            <Aircraft key={resetVersion} debug={debug} />
-          </Physics>
+          <WorldCube debug={debug} />
+          <Fleet debug={debug} />
         </Suspense>
       </Canvas>
+    </div>
+  );
+}
+
+function ConnectionOverlay() {
+  const connection = useFlightStore((state) => state.connection);
+  const playerCount = useFlightStore((state) => state.playerIds.length);
+
+  if (connection === "connected") {
+    return (
+      <div
+        style={{
+          position: "absolute",
+          top: 8,
+          right: 8,
+          zIndex: 3,
+          padding: "6px 10px",
+          fontFamily: "system-ui, sans-serif",
+          fontSize: 13,
+          color: "#d7ffe6",
+          background: "rgba(0, 20, 8, 0.55)",
+          border: "1px solid rgba(120, 255, 170, 0.35)",
+          borderRadius: 6,
+          pointerEvents: "none",
+        }}
+      >
+        LIVE · {playerCount} {playerCount === 1 ? "pilot" : "pilots"}
+      </div>
+    );
+  }
+
+  return (
+    <div
+      style={{
+        position: "absolute",
+        inset: 0,
+        zIndex: 3,
+        display: "grid",
+        placeContent: "center",
+        textAlign: "center",
+        color: "#fff",
+        fontFamily: "system-ui, sans-serif",
+        background: "rgba(4, 10, 18, 0.55)",
+        textShadow: "0 2px 8px #000",
+      }}
+    >
+      <div style={{ fontSize: 28, fontWeight: 700 }}>
+        {connection === "connecting" ? "Connecting to game server" : "Reconnecting"}
+      </div>
+      <div style={{ marginTop: 8, opacity: 0.8 }}>
+        Flight state is simulated on the C++ WebSocket server
+      </div>
     </div>
   );
 }
@@ -163,7 +175,20 @@ function CrashOverlay() {
 }
 
 function DebugPanel() {
-  const { debug, fps, airspeed, throttle, verticalSpeed, angleOfAttack, grounded, crashed, position } = useFlightStore();
+  const {
+    debug,
+    fps,
+    airspeed,
+    throttle,
+    verticalSpeed,
+    angleOfAttack,
+    grounded,
+    crashed,
+    position,
+    connection,
+    localPlayerId,
+    players,
+  } = useFlightStore();
   const stallRatio = THREE.MathUtils.clamp(angleOfAttack / STALL_AOA, 0, 1);
   const stallPercent = Math.round(stallRatio * 100);
   const stallColor = stallRatio >= 0.85 ? "#ff5a5a" : stallRatio >= 0.6 ? "#ffcc33" : "#7dff9a";
@@ -187,9 +212,20 @@ function DebugPanel() {
     >
       <div>DEBUG · ⌘K to toggle</div>
       <div>{fps || "--"} FPS</div>
-      <div>{airspeed.toFixed(1)} u/s · {Math.round(throttle * 100)}% throttle</div>
-      <div>Vertical {verticalSpeed >= 0 ? "+" : ""}{verticalSpeed.toFixed(1)} u/s</div>
-      <div>AoA {angleOfAttack >= 0 ? "+" : ""}{(angleOfAttack * THREE.MathUtils.RAD2DEG).toFixed(1)}°</div>
+      <div>
+        {connection} · id {localPlayerId ?? "--"} · {players.length} pilots
+      </div>
+      <div>
+        {airspeed.toFixed(1)} u/s · {Math.round(throttle * 100)}% throttle
+      </div>
+      <div>
+        Vertical {verticalSpeed >= 0 ? "+" : ""}
+        {verticalSpeed.toFixed(1)} u/s
+      </div>
+      <div>
+        AoA {angleOfAttack >= 0 ? "+" : ""}
+        {(angleOfAttack * THREE.MathUtils.RAD2DEG).toFixed(1)}°
+      </div>
       <div style={{ display: "flex", alignItems: "center", gap: 8, margin: "2px 0" }}>
         <span style={{ color: stallRatio >= 0.85 ? stallColor : undefined }}>
           Stall {stallPercent}%
@@ -212,8 +248,10 @@ function DebugPanel() {
           />
         </div>
       </div>
-      <div>X {position.x.toFixed(1)} · Y {position.y.toFixed(1)} · Z {position.z.toFixed(1)}</div>
-      <div>{crashed ? "CRASHED" : grounded ? "GROUND" : "AIRBORNE"} · Rapier colliders visible</div>
+      <div>
+        X {position.x.toFixed(1)} · Y {position.y.toFixed(1)} · Z {position.z.toFixed(1)}
+      </div>
+      <div>{crashed ? "CRASHED" : grounded ? "GROUND" : "AIRBORNE"} · server-authoritative</div>
       <div>W/S throttle · A/D turn · Space/Shift pitch</div>
     </div>
   );
@@ -395,8 +433,8 @@ function createWorldWallGeometry() {
   // Drop the -Y face (ground is drawn separately) and both Z end caps, since
   // the strip is endless.
   const dropped = [box.groups[3], box.groups[4], box.groups[5]];
-  const kept = Array.from(index.array).filter((_, i) =>
-    !dropped.some((group) => i >= group.start && i < group.start + group.count),
+  const kept = Array.from(index.array).filter(
+    (_, i) => !dropped.some((group) => i >= group.start && i < group.start + group.count),
   );
   box.setIndex(kept);
   box.clearGroups();
@@ -413,8 +451,8 @@ const WORLD_MATERIAL = new THREE.MeshBasicMaterial({
   toneMapped: false,
 });
 
-// Shared aircraft position, written every frame by the Aircraft so the world
-// shell can follow without going through the store.
+// Shared aircraft position, written every frame by the local Aircraft so the
+// world shell can follow without going through the store.
 const aircraftPosition = new THREE.Vector3(0, SPAWN_Y, SPAWN_Z);
 
 function WorldCube({ debug }: { debug: boolean }) {
@@ -442,27 +480,6 @@ function WorldCube({ debug }: { debug: boolean }) {
       </group>
       {debug && <EntityBounds target={ref} />}
     </>
-  );
-}
-
-function WorldColliders() {
-  const halfWidth = WORLD_WIDTH / 2;
-  const halfHeight = WORLD_HEIGHT / 2;
-  const halfDepth = WORLD_COLLIDER_LENGTH / 2;
-
-  return (
-    <RigidBody type="fixed" colliders={false} name="world">
-      <CuboidCollider
-        name="ground"
-        args={[halfWidth, 0.5, halfDepth]}
-        position={[0, GROUND_Y - 0.5, 0]}
-        friction={0.9}
-        restitution={0.04}
-      />
-      <CuboidCollider name="ceiling" args={[halfWidth, 0.5, halfDepth]} position={[0, halfHeight + 0.5, 0]} />
-      <CuboidCollider name="wall-x" args={[0.5, halfHeight, halfDepth]} position={[halfWidth + 0.5, 0, 0]} />
-      <CuboidCollider name="wall-x" args={[0.5, halfHeight, halfDepth]} position={[-halfWidth - 0.5, 0, 0]} />
-    </RigidBody>
   );
 }
 
@@ -533,56 +550,6 @@ function LocalEntityBounds({ target }: { target: React.RefObject<THREE.Object3D 
   return null;
 }
 
-type KeyState = Record<string, boolean>;
-
-// Keys whose browser default (page scroll, button activation) must be suppressed.
-const FLIGHT_KEYS = new Set(["Space", "ShiftLeft", "ShiftRight", "KeyW", "KeyA", "KeyS", "KeyD"]);
-
-function useKeyboard(): React.RefObject<KeyState> {
-  const keys = useRef<KeyState>({});
-  useEffect(() => {
-    const down = (e: KeyboardEvent) => {
-      // Shortcuts (⌘K etc.) must not register as flight input. macOS also
-      // swallows the keyup for keys released while ⌘ is held, which would
-      // otherwise leave them stuck "down".
-      if (e.metaKey || e.ctrlKey) return;
-      if (FLIGHT_KEYS.has(e.code)) e.preventDefault();
-      keys.current[e.code] = true;
-    };
-    const up = (e: KeyboardEvent) => {
-      keys.current[e.code] = false;
-      if (e.code === "MetaLeft" || e.code === "MetaRight" || e.code === "ControlLeft" || e.code === "ControlRight") {
-        keys.current = {};
-      }
-    };
-    const release = () => {
-      keys.current = {};
-    };
-    const visibility = () => {
-      if (document.hidden) release();
-    };
-    window.addEventListener("keydown", down);
-    window.addEventListener("keyup", up);
-    window.addEventListener("blur", release);
-    document.addEventListener("visibilitychange", visibility);
-    return () => {
-      window.removeEventListener("keydown", down);
-      window.removeEventListener("keyup", up);
-      window.removeEventListener("blur", release);
-      document.removeEventListener("visibilitychange", visibility);
-    };
-  }, []);
-  return keys;
-}
-
-const forward = new THREE.Vector3();
-const right = new THREE.Vector3();
-const up = new THREE.Vector3();
-const linearVelocity = new THREE.Vector3();
-const angularVelocity = new THREE.Vector3();
-const bodyRotation = new THREE.Quaternion();
-const totalForce = new THREE.Vector3();
-const totalTorque = new THREE.Vector3();
 const shadowWorldPosition = new THREE.Vector3();
 const shadowWorldQuaternion = new THREE.Quaternion();
 const shadowEuler = new THREE.Euler(0, 0, 0, "YXZ");
@@ -619,234 +586,93 @@ function GroundShadow({ target }: { target: React.RefObject<THREE.Object3D | nul
   return null;
 }
 
-function Aircraft({ debug }: { debug: boolean }) {
-  const bodyRef = useRef<RapierRigidBody>(null);
-  const ref = useRef<THREE.Group>(null);
+function Fleet({ debug }: { debug: boolean }) {
+  const playerIds = useFlightStore((state) => state.playerIds);
+  const localPlayerId = useFlightStore((state) => state.localPlayerId);
+  return (
+    <>
+      {playerIds.map((id) => (
+        <Aircraft key={id} playerId={id} isLocal={id === localPlayerId} debug={debug} />
+      ))}
+    </>
+  );
+}
+
+function PilotLabel({ playerId }: { playerId: number }) {
+  const name = useFlightStore(
+    (state) => state.players.find((player) => player.id === playerId)?.name ?? `Pilot-${playerId}`,
+  );
+  return (
+    <Html position={[0, 7.5, -6]} center distanceFactor={40} style={{ pointerEvents: "none" }}>
+      <div
+        style={{
+          padding: "2px 8px",
+          borderRadius: 4,
+          background: "rgba(0, 0, 0, 0.55)",
+          color: "#fff",
+          fontFamily: "system-ui, sans-serif",
+          fontSize: 12,
+          whiteSpace: "nowrap",
+        }}
+      >
+        {name}
+      </div>
+    </Html>
+  );
+}
+
+function Aircraft({
+  playerId,
+  isLocal,
+  debug,
+}: {
+  playerId: number;
+  isLocal: boolean;
+  debug: boolean;
+}) {
+  const bodyRef = useRef<THREE.Group>(null);
   const modelRef = useRef<THREE.Group>(null);
   const explosionRef = useRef<ExplosionHandle>(null);
-  const impactVelocity = useRef(new THREE.Vector3(0, 0, INITIAL_AIRSPEED));
-  const pitchTarget = useRef(0);
-  const throttle = useRef(INITIAL_THROTTLE);
-  const angleOfAttack = useRef(0);
-  const telemetryElapsed = useRef(0);
-  const groundContacts = useRef(0);
+  const velocity = useRef(new THREE.Vector3());
+  const orientation = useRef(new THREE.Quaternion());
   const crashed = useRef(false);
-  const keys = useKeyboard();
+  const spawn = useFlightStore(
+    (state) => state.players.find((player) => player.id === playerId)?.spawn ?? 0,
+  );
 
-  const crashPlane = (reason: string, impactSpeed: number) => {
-    if (crashed.current) return;
-    crashed.current = true;
-    throttle.current = 0;
+  useFrame(() => {
+    const pose = samplePlayer(playerId);
     const body = bodyRef.current;
-    if (body) {
-      const impulse = body.mass() * Math.min(impactSpeed, 20) * 0.08;
-      body.applyTorqueImpulse({ x: impulse * 0.35, y: impulse * 0.2, z: impulse }, true);
+    if (!pose || !body) return;
+
+    body.position.set(pose.x, pose.y, pose.z);
+    orientation.current.set(pose.qx, pose.qy, pose.qz, pose.qw);
+    body.quaternion.copy(orientation.current);
+    velocity.current.set(pose.vx, pose.vy, pose.vz);
+
+    if (isLocal) aircraftPosition.set(pose.x, pose.y, pose.z);
+
+    if (pose.crashed && !crashed.current) {
+      crashed.current = true;
+      const explosionPosition = new THREE.Vector3(0, 2, -5.5);
+      body.localToWorld(explosionPosition);
+      explosionRef.current?.trigger(explosionPosition);
     }
-    const explosionPosition = new THREE.Vector3(0, 2, -5.5);
-    if (ref.current) {
-      ref.current.localToWorld(explosionPosition);
-    } else if (body) {
-      const position = body.translation();
-      explosionPosition.set(position.x, position.y + 2, position.z);
-    }
-    explosionRef.current?.trigger(explosionPosition);
-    useFlightStore.getState().crash(reason);
-  };
-
-  const handleCollisionEnter = (event: CollisionEnterPayload) => {
-    const surface = event.other.colliderObject?.name ?? event.other.rigidBodyObject?.name ?? "";
-    const velocity = impactVelocity.current;
-
-    if (surface === "ground") {
-      groundContacts.current += 1;
-      const impactSpeed = Math.max(0, -velocity.y);
-      if (impactSpeed > MAX_SAFE_LANDING_SPEED) {
-        crashPlane(`Hard landing at ${impactSpeed.toFixed(1)} u/s`, impactSpeed);
-      }
-      return;
-    }
-
-    let impactSpeed = velocity.length();
-    if (surface === "wall-x") impactSpeed = Math.abs(velocity.x);
-    if (surface === "wall-z") impactSpeed = Math.abs(velocity.z);
-    if (surface === "ceiling") impactSpeed = Math.max(0, velocity.y);
-
-    if (surface.startsWith("wall") && impactSpeed > MAX_SAFE_WALL_IMPACT) {
-      crashPlane("Collision with the wall", impactSpeed);
-    } else if (surface === "ceiling" && impactSpeed > MAX_SAFE_WALL_IMPACT) {
-      crashPlane("Collision with the ceiling", impactSpeed);
-    }
-  };
-
-  const handleCollisionExit = (event: { other: CollisionEnterPayload["other"] }) => {
-    const surface = event.other.colliderObject?.name ?? event.other.rigidBodyObject?.name ?? "";
-    if (surface === "ground") {
-      groundContacts.current = Math.max(0, groundContacts.current - 1);
-    }
-  };
-
-  useBeforePhysicsStep(() => {
-    const body = bodyRef.current;
-    if (!body) return;
-    const k = keys.current;
-    const velocity = body.linvel();
-    const rotation = body.rotation();
-    const spin = body.angvel();
-
-    linearVelocity.set(velocity.x, velocity.y, velocity.z);
-    impactVelocity.current.copy(linearVelocity);
-    angularVelocity.set(spin.x, spin.y, spin.z);
-    bodyRotation.set(rotation.x, rotation.y, rotation.z, rotation.w);
-    forward.set(0, 0, 1).applyQuaternion(bodyRotation).normalize();
-    up.set(0, 1, 0).applyQuaternion(bodyRotation).normalize();
-    right.set(1, 0, 0).applyQuaternion(bodyRotation).normalize();
-
-    body.resetForces(true);
-    body.resetTorques(true);
-
-    const throttleInput = crashed.current ? 0 : (k.KeyW ? 1 : 0) - (k.KeyS ? 1 : 0);
-    const turn = crashed.current ? 0 : (k.KeyA ? 1 : 0) - (k.KeyD ? 1 : 0);
-    const pitch = crashed.current
-      ? 0
-      : (k.Space ? 1 : 0) - (k.ShiftLeft || k.ShiftRight ? 1 : 0);
-
-    if (crashed.current) {
-      throttle.current = 0;
-      return;
-    } else {
-      throttle.current = THREE.MathUtils.clamp(
-        throttle.current + throttleInput * THROTTLE_RATE * PHYSICS_STEP,
-        0,
-        1,
-      );
-    }
-
-    if (pitch) {
-      pitchTarget.current = THREE.MathUtils.clamp(
-        pitchTarget.current + pitch * PITCH_SPEED * PHYSICS_STEP,
-        -MAX_PITCH,
-        MAX_PITCH,
-      );
-    } else {
-      pitchTarget.current = THREE.MathUtils.damp(
-        pitchTarget.current,
-        0,
-        0.65,
-        PHYSICS_STEP,
-      );
-    }
-
-    const forwardAirspeed = Math.max(0, linearVelocity.dot(forward));
-    const controlAuthority = THREE.MathUtils.clamp(forwardAirspeed / CRUISE_SPEED, 0.15, 1.25);
-    const mass = body.mass();
-    const speed = linearVelocity.length();
-    const pitchAngle = Math.asin(THREE.MathUtils.clamp(forward.y, -1, 1));
-    const flightPathPitch =
-      speed > 1 ? Math.asin(THREE.MathUtils.clamp(linearVelocity.y / speed, -1, 1)) : 0;
-    const aoa = THREE.MathUtils.clamp(
-      pitchAngle - flightPathPitch,
-      -MAX_PITCH,
-      MAX_PITCH,
-    );
-    angleOfAttack.current = aoa;
-    const liftAcceleration = THREE.MathUtils.clamp(
-      (forwardAirspeed / CRUISE_SPEED) ** 2 *
-        (LIFT_BASE_ACCELERATION + LIFT_AOA_ACCELERATION * aoa),
-      -MAX_LIFT_ACCELERATION,
-      MAX_LIFT_ACCELERATION,
-    );
-    const sideslipSpeed = linearVelocity.dot(right);
-
-    totalForce
-      .copy(forward)
-      .multiplyScalar(throttle.current * MAX_ENGINE_ACCELERATION * mass)
-      .addScaledVector(up, liftAcceleration * mass);
-    if (speed > 0.001) {
-      totalForce.addScaledVector(linearVelocity, -DRAG_COEFFICIENT * speed * mass);
-    }
-    totalForce.addScaledVector(right, -sideslipSpeed * SIDESLIP_DAMPING * mass);
-    body.addForce(totalForce, true);
-    const bankAngle = Math.atan2(right.y, up.y);
-    const pitchRate = angularVelocity.dot(right);
-    const rollRate = angularVelocity.dot(forward);
-    const yawRate = angularVelocity.dot(up);
-    const pitchError = pitchTarget.current - pitchAngle;
-    const bankError = -turn * MAX_BANK - bankAngle;
-
-    totalTorque
-      .copy(right)
-      .multiplyScalar((-pitchError * 34 - pitchRate * 9) * mass * controlAuthority)
-      .addScaledVector(
-        forward,
-        (bankError * 22 - rollRate * 7) * mass * controlAuthority,
-      )
-      .addScaledVector(
-        up,
-        (turn * 6 * controlAuthority - yawRate * 1.5) * mass,
-      );
-    body.addTorque(totalTorque, true);
-  });
-
-  useFrame((_, delta) => {
-    const body = bodyRef.current;
-    if (!body) return;
-    const velocity = body.linvel();
-    const position = body.translation();
-    aircraftPosition.set(position.x, position.y, position.z);
-
-    telemetryElapsed.current += delta;
-    if (telemetryElapsed.current >= 0.2) {
-      useFlightStore.getState().setTelemetry({
-        airspeed: Math.hypot(velocity.x, velocity.y, velocity.z),
-        throttle: throttle.current,
-        verticalSpeed: velocity.y,
-        angleOfAttack: angleOfAttack.current,
-        grounded: groundContacts.current > 0,
-        position: { x: position.x, y: position.y, z: position.z },
-      });
-      telemetryElapsed.current = 0;
-    }
+    if (!pose.crashed) crashed.current = false;
   });
 
   return (
     <>
-      <RigidBody
-        ref={bodyRef}
-        name="aircraft"
-        colliders={false}
-        position={[0, SPAWN_Y, SPAWN_Z]}
-        linearVelocity={[0, 0, INITIAL_AIRSPEED]}
-        linearDamping={0.015}
-        angularDamping={0.18}
-        ccd
-        canSleep={false}
-        onCollisionEnter={handleCollisionEnter}
-        onCollisionExit={handleCollisionExit}
-      >
-        <group ref={ref}>
-          <group ref={modelRef}>
-            <AirbusA320 />
-          </group>
+      <group ref={bodyRef} position={[0, SPAWN_Y, SPAWN_Z]}>
+        <group ref={modelRef}>
+          <AirbusA320 />
         </group>
-        <CapsuleCollider
-          name="aircraft-fuselage"
-          args={[5.4, 0.82]}
-          position={[0, 2.05, -6.3]}
-          rotation={[Math.PI / 2, 0, 0]}
-          friction={0.35}
-          restitution={0.04}
-        />
-        <CuboidCollider name="aircraft-wings" args={[6, 0.16, 1.25]} position={[0, 1.72, -5.2]} />
-        <CuboidCollider name="aircraft-tailplane" args={[2.4, 0.12, 0.7]} position={[0, 2.25, -11.25]} />
-        <CuboidCollider name="aircraft-tail" args={[0.14, 1.25, 1.1]} position={[0, 3, -11.2]} />
-        <BallCollider name="aircraft-gear" args={[0.22]} position={[-2.05, 0.59, -5.7]} friction={1.2} />
-        <BallCollider name="aircraft-gear" args={[0.22]} position={[2.05, 0.59, -5.7]} friction={1.2} />
-        <BallCollider name="aircraft-gear" args={[0.22]} position={[0, 0.59, -1.8]} friction={1.2} />
-      </RigidBody>
+        {!isLocal && <PilotLabel playerId={playerId} />}
+      </group>
       {debug && <LocalEntityBounds target={modelRef} />}
-      <GroundShadow target={ref} />
-      <ChaseCamera target={ref} body={bodyRef} />
-      <Explosion ref={explosionRef} groundY={GROUND_Y} />
+      {isLocal && <GroundShadow target={bodyRef} />}
+      {isLocal && <ChaseCamera target={bodyRef} velocity={velocity} />}
+      <Explosion key={spawn} ref={explosionRef} groundY={GROUND_Y} />
     </>
   );
 }
@@ -857,10 +683,10 @@ const currentLook = new THREE.Vector3();
 
 function ChaseCamera({
   target,
-  body,
+  velocity,
 }: {
   target: React.RefObject<THREE.Object3D | null>;
-  body: React.RefObject<RapierRigidBody | null>;
+  velocity: React.RefObject<THREE.Vector3>;
 }) {
   useFrame(({ camera }, delta) => {
     const plane = target.current;
@@ -878,10 +704,7 @@ function ChaseCamera({
 
     // Widen the field of view as speed builds for a sense of acceleration.
     if (camera instanceof THREE.PerspectiveCamera) {
-      const rigidBody = body.current;
-      const speed = rigidBody
-        ? Math.hypot(rigidBody.linvel().x, rigidBody.linvel().y, rigidBody.linvel().z)
-        : 0;
+      const speed = velocity.current.length();
       const speedRatio = THREE.MathUtils.clamp(
         (speed - FOV_MIN_SPEED) / (FOV_MAX_SPEED - FOV_MIN_SPEED),
         0,
