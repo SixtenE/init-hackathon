@@ -1,0 +1,149 @@
+{
+  "name": "downtown",
+  "buildings": [
+    {
+      "id": "gate-west",
+      "x": -20,
+      "z": 98,
+      "width": 4,
+      "floors": 10,
+      "depth": 4
+    },
+    {
+      "id": "gate-east",
+      "x": 22,
+      "z": 100,
+      "width": 4,
+      "floors": 11,
+      "depth": 3
+    },
+    {
+      "id": "west-low",
+      "x": -32,
+      "z": 118,
+      "width": 6,
+      "floors": 8,
+      "depth": 4
+    },
+    {
+      "id": "east-low",
+      "x": 42,
+      "z": 122,
+      "width": 5,
+      "floors": 9,
+      "depth": 4
+    },
+    {
+      "id": "mid-west",
+      "x": -85,
+      "z": 135,
+      "width": 5,
+      "floors": 12,
+      "depth": 4
+    },
+    {
+      "id": "mid-east",
+      "x": 84,
+      "z": 140,
+      "width": 4,
+      "floors": 16,
+      "depth": 5
+    },
+    {
+      "id": "west-tower",
+      "x": -30,
+      "z": 144,
+      "width": 4,
+      "floors": 26,
+      "depth": 4
+    },
+    {
+      "id": "twin-a",
+      "x": 20,
+      "z": 145,
+      "width": 4,
+      "floors": 28,
+      "depth": 3
+    },
+    {
+      "id": "twin-b",
+      "x": 35.9,
+      "z": 145,
+      "width": 4,
+      "floors": 28,
+      "depth": 3
+    },
+    {
+      "id": "east-annex",
+      "x": 52,
+      "z": 146,
+      "width": 3,
+      "floors": 14,
+      "depth": 4
+    },
+    {
+      "id": "west-office",
+      "x": -50,
+      "z": 148,
+      "width": 5,
+      "floors": 18,
+      "depth": 4
+    },
+    {
+      "id": "east-high",
+      "x": 68,
+      "z": 160,
+      "width": 4,
+      "floors": 22,
+      "depth": 4
+    },
+    {
+      "id": "west-wide",
+      "x": -68,
+      "z": 162,
+      "width": 6,
+      "floors": 14,
+      "depth": 5
+    },
+    {
+      "id": "west-slim",
+      "x": -18,
+      "z": 170,
+      "width": 3,
+      "floors": 30,
+      "depth": 3
+    },
+    {
+      "id": "east-rear",
+      "x": 28,
+      "z": 172,
+      "width": 6,
+      "floors": 12,
+      "depth": 4
+    },
+    {
+      "id": "far-east",
+      "x": 48,
+      "z": 205,
+      "width": 4,
+      "floors": 18,
+      "depth": 4
+    },
+    {
+      "id": "far-west",
+      "x": -42,
+      "z": 208,
+      "width": 5,
+      "floors": 20,
+      "depth": 3
+    },
+    {
+      "id": "landmark",
+      "x": 12,
+      "z": 230,
+      "width": 3,
+      "floors": 34,
+      "depth": 3
+    }
+  ]
+}

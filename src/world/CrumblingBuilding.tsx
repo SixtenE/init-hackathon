@@ -11,16 +11,17 @@ import {
 } from "@react-three/rapier";
 import * as THREE from "three";
 import { useFlightStore } from "../flightStore";
+import type { MapBuilding } from "./map";
 
-const BLOCK = 3.1;
-const GRID_X = 4;
-const GRID_Y = 28;
-const GRID_Z = 3;
-export const BUILDING_WIDTH = GRID_X * BLOCK;
-const BUILDING_HEIGHT = GRID_Y * BLOCK;
-const BUILDING_DEPTH = GRID_Z * BLOCK;
+export const BLOCK = 3.1;
 const DEBRIS_SIZE = BLOCK * 0.92;
 const DEBRIS_HALF = DEBRIS_SIZE / 2;
+
+export type BuildingGrid = {
+  x: number;
+  y: number;
+  z: number;
+};
 
 const CONCRETE = new THREE.MeshStandardMaterial({
   color: "#c9c2b6",
@@ -112,16 +113,28 @@ type Impact = {
   velocity: THREE.Vector3;
 };
 
-function createDebrisInstances(origin: [number, number, number]): InstancedRigidBodyProps[] {
+function buildingExtents(grid: BuildingGrid) {
+  return {
+    width: grid.x * BLOCK,
+    height: grid.y * BLOCK,
+    depth: grid.z * BLOCK,
+  };
+}
+
+function createDebrisInstances(
+  origin: [number, number, number],
+  grid: BuildingGrid,
+): InstancedRigidBodyProps[] {
   const [ox, groundY, oz] = origin;
+  const { width, depth } = buildingExtents(grid);
   const instances: InstancedRigidBodyProps[] = [];
-  const x0 = ox - BUILDING_WIDTH / 2 + BLOCK / 2;
+  const x0 = ox - width / 2 + BLOCK / 2;
   const y0 = groundY + BLOCK / 2;
-  const z0 = oz - BUILDING_DEPTH / 2 + BLOCK / 2;
+  const z0 = oz - depth / 2 + BLOCK / 2;
   let index = 0;
-  for (let iy = 0; iy < GRID_Y; iy += 1) {
-    for (let iz = 0; iz < GRID_Z; iz += 1) {
-      for (let ix = 0; ix < GRID_X; ix += 1) {
+  for (let iy = 0; iy < grid.y; iy += 1) {
+    for (let iz = 0; iz < grid.z; iz += 1) {
+      for (let ix = 0; ix < grid.x; ix += 1) {
         instances.push({
           key: index,
           position: [x0 + ix * BLOCK, y0 + iy * BLOCK, z0 + iz * BLOCK],
@@ -133,46 +146,62 @@ function createDebrisInstances(origin: [number, number, number]): InstancedRigid
   return instances;
 }
 
-function debrisColor(index: number) {
-  const ix = index % GRID_X;
-  const iz = Math.floor(index / GRID_X) % GRID_Z;
-  const iy = Math.floor(index / (GRID_X * GRID_Z));
-  const onFacade = ix === 0 || ix === GRID_X - 1 || iz === 0 || iz === GRID_Z - 1;
-  const isCorner = (ix === 0 || ix === GRID_X - 1) && (iz === 0 || iz === GRID_Z - 1);
+function debrisColor(index: number, grid: BuildingGrid) {
+  const ix = index % grid.x;
+  const iz = Math.floor(index / grid.x) % grid.z;
+  const iy = Math.floor(index / (grid.x * grid.z));
+  const onFacade = ix === 0 || ix === grid.x - 1 || iz === 0 || iz === grid.z - 1;
+  const isCorner = (ix === 0 || ix === grid.x - 1) && (iz === 0 || iz === grid.z - 1);
   if (iy === 0 || isCorner) return DARK_CONCRETE;
-  if (iy === GRID_Y - 1) return DARK_CONCRETE;
+  if (iy === grid.y - 1) return DARK_CONCRETE;
   if (onFacade) return GLASS_COLOR;
   return CONCRETE_COLOR;
 }
 
-function IntactTower() {
-  const glassY = BUILDING_HEIGHT * 0.54;
-  const glassH = BUILDING_HEIGHT * 0.78;
+function IntactTower({ grid }: { grid: BuildingGrid }) {
+  const { width, height, depth } = buildingExtents(grid);
+  const glass = useMemo(() => {
+    const material = GLASS.clone();
+    const map = mapTexture.clone();
+    const emit = emissiveTexture.clone();
+    map.wrapS = map.wrapT = THREE.RepeatWrapping;
+    emit.wrapS = emit.wrapT = THREE.RepeatWrapping;
+    const repeatX = Math.max(grid.x / 4, 0.5);
+    const repeatY = Math.max(grid.y / 28, 0.35);
+    map.repeat.set(repeatX, repeatY);
+    emit.repeat.set(repeatX, repeatY);
+    material.map = map;
+    material.emissiveMap = emit;
+    return material;
+  }, [grid.x, grid.y]);
+
+  const glassY = height * 0.54;
+  const glassH = height * 0.78;
   return (
     <group>
-      <mesh position={[0, BUILDING_HEIGHT / 2, 0]} material={CONCRETE}>
-        <boxGeometry args={[BUILDING_WIDTH, BUILDING_HEIGHT, BUILDING_DEPTH]} />
+      <mesh position={[0, height / 2, 0]} material={CONCRETE}>
+        <boxGeometry args={[width, height, depth]} />
       </mesh>
       <mesh position={[0, 1.55, 0]} material={LOBBY}>
-        <boxGeometry args={[BUILDING_WIDTH + 0.18, 3.1, BUILDING_DEPTH + 0.18]} />
+        <boxGeometry args={[width + 0.18, 3.1, depth + 0.18]} />
       </mesh>
-      <mesh position={[0, glassY, BUILDING_DEPTH / 2 + 0.05]} material={GLASS}>
-        <boxGeometry args={[BUILDING_WIDTH * 0.78, glassH, 0.12]} />
+      <mesh position={[0, glassY, depth / 2 + 0.05]} material={glass}>
+        <boxGeometry args={[width * 0.78, glassH, 0.12]} />
       </mesh>
-      <mesh position={[0, glassY, -BUILDING_DEPTH / 2 - 0.05]} material={GLASS}>
-        <boxGeometry args={[BUILDING_WIDTH * 0.78, glassH, 0.12]} />
+      <mesh position={[0, glassY, -depth / 2 - 0.05]} material={glass}>
+        <boxGeometry args={[width * 0.78, glassH, 0.12]} />
       </mesh>
-      <mesh position={[BUILDING_WIDTH / 2 + 0.05, glassY, 0]} rotation={[0, Math.PI / 2, 0]} material={GLASS}>
-        <boxGeometry args={[BUILDING_DEPTH * 0.78, glassH, 0.12]} />
+      <mesh position={[width / 2 + 0.05, glassY, 0]} rotation={[0, Math.PI / 2, 0]} material={glass}>
+        <boxGeometry args={[depth * 0.78, glassH, 0.12]} />
       </mesh>
-      <mesh position={[-BUILDING_WIDTH / 2 - 0.05, glassY, 0]} rotation={[0, Math.PI / 2, 0]} material={GLASS}>
-        <boxGeometry args={[BUILDING_DEPTH * 0.78, glassH, 0.12]} />
+      <mesh position={[-width / 2 - 0.05, glassY, 0]} rotation={[0, Math.PI / 2, 0]} material={glass}>
+        <boxGeometry args={[depth * 0.78, glassH, 0.12]} />
       </mesh>
-      <mesh position={[0, BUILDING_HEIGHT + 0.28, 0]} material={ROOF}>
-        <boxGeometry args={[BUILDING_WIDTH + 0.7, 0.55, BUILDING_DEPTH + 0.7]} />
+      <mesh position={[0, height + 0.28, 0]} material={ROOF}>
+        <boxGeometry args={[width + 0.7, 0.55, depth + 0.7]} />
       </mesh>
-      <mesh position={[0, BUILDING_HEIGHT + 1.35, -0.4]} material={PENTHOUSE}>
-        <boxGeometry args={[BUILDING_WIDTH * 0.36, 1.6, BUILDING_DEPTH * 0.4]} />
+      <mesh position={[0, height + 1.35, -0.4]} material={PENTHOUSE}>
+        <boxGeometry args={[width * 0.36, 1.6, depth * 0.4]} />
       </mesh>
     </group>
   );
@@ -180,25 +209,30 @@ function IntactTower() {
 
 function BuildingDebris({
   origin,
+  grid,
   impact,
 }: {
   origin: [number, number, number];
+  grid: BuildingGrid;
   impact: Impact;
 }) {
   const bodiesRef = useRef<(RapierRigidBody | null)[] | null>(null);
   const meshRef = useRef<THREE.InstancedMesh>(null);
   const kicked = useRef(false);
-  const instances = useMemo(() => createDebrisInstances(origin), [origin]);
+  const instances = useMemo(
+    () => createDebrisInstances(origin, grid),
+    [origin, grid],
+  );
   const { world } = useRapier();
 
   useLayoutEffect(() => {
     const mesh = meshRef.current;
     if (!mesh) return;
     for (let index = 0; index < instances.length; index += 1) {
-      mesh.setColorAt(index, debrisColor(index));
+      mesh.setColorAt(index, debrisColor(index, grid));
     }
     if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
-  }, [instances.length]);
+  }, [grid, instances.length]);
 
   useLayoutEffect(() => {
     return () => {
@@ -291,13 +325,28 @@ function BuildingDebris({
   );
 }
 
-export function CrumblingBuilding({ origin }: { origin: [number, number, number] }) {
+export function CrumblingBuilding({
+  building,
+  groundY,
+}: {
+  building: MapBuilding;
+  groundY: number;
+}) {
+  const origin = useMemo<[number, number, number]>(
+    () => [building.x, groundY, building.z],
+    [building.x, building.z, groundY],
+  );
+  const grid = useMemo<BuildingGrid>(
+    () => ({ x: building.width, y: building.floors, z: building.depth }),
+    [building.depth, building.floors, building.width],
+  );
   const resetVersion = useFlightStore((state) => state.resetVersion);
   const [collapsed, setCollapsed] = useState(false);
   const impactRef = useRef<Impact>({
     point: new THREE.Vector3(),
     velocity: new THREE.Vector3(),
   });
+  const { width, height, depth } = buildingExtents(grid);
 
   useLayoutEffect(() => {
     setCollapsed(false);
@@ -313,7 +362,7 @@ export function CrumblingBuilding({ origin }: { origin: [number, number, number]
     const velocity = otherBody?.linvel();
     impactRef.current.point.set(
       translation?.x ?? origin[0],
-      translation?.y ?? origin[1] + BUILDING_HEIGHT * 0.45,
+      translation?.y ?? origin[1] + height * 0.45,
       translation?.z ?? origin[2],
     );
     impactRef.current.velocity.set(velocity?.x ?? 0, velocity?.y ?? 0, velocity?.z ?? 18);
@@ -321,7 +370,7 @@ export function CrumblingBuilding({ origin }: { origin: [number, number, number]
   };
 
   if (collapsed) {
-    return <BuildingDebris origin={origin} impact={impactRef.current} />;
+    return <BuildingDebris origin={origin} grid={grid} impact={impactRef.current} />;
   }
 
   return (
@@ -334,12 +383,12 @@ export function CrumblingBuilding({ origin }: { origin: [number, number, number]
     >
       <CuboidCollider
         name="building"
-        args={[BUILDING_WIDTH / 2, (BUILDING_HEIGHT + 0.55) / 2, BUILDING_DEPTH / 2]}
-        position={[0, (BUILDING_HEIGHT + 0.55) / 2, 0]}
+        args={[width / 2, (height + 0.55) / 2, depth / 2]}
+        position={[0, (height + 0.55) / 2, 0]}
         friction={0.7}
         restitution={0.02}
       />
-      <IntactTower />
+      <IntactTower grid={grid} />
     </RigidBody>
   );
 }

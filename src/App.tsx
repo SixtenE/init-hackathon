@@ -18,7 +18,7 @@ import { gameClient } from "./net/gameClient";
 import { samplePlayer } from "./net/snapshots";
 import { useGameConnection } from "./net/useGameConnection";
 import { Explosion, type ExplosionHandle } from "./vfx/Explosion";
-import { CrumblingBuilding, BUILDING_WIDTH } from "./world/CrumblingBuilding";
+import { WorldBuildings } from "./world/WorldBuildings";
 
 const AirbusA320 = lazy(() =>
   import("./models/AirbusA320").then(({ AirbusA320: Component }) => ({
@@ -44,16 +44,9 @@ const WORLD_HEIGHT = 120;
 const GROUND_Y = -WORLD_HEIGHT / 2;
 const SPAWN_Z = 0;
 // Start in the middle of the arena, well above the ground and the
-// building, with room to climb before the ceiling.
+// downtown skyline, with room to climb before the ceiling.
 const SPAWN_ALTITUDE = 42;
 const SPAWN_Y = GROUND_Y + SPAWN_ALTITUDE;
-const BUILDING_GAP = 3.5;
-const BUILDING_ORIGIN_A: [number, number, number] = [20, GROUND_Y, 145];
-const BUILDING_ORIGIN_B: [number, number, number] = [
-  BUILDING_ORIGIN_A[0] + BUILDING_WIDTH + BUILDING_GAP,
-  GROUND_Y,
-  145,
-];
 
 // Flight control tuning (units per second / radians per second).
 const MAX_BANK = 0.62;
@@ -224,10 +217,7 @@ export default function App() {
             >
               <WorldCube debug={debug} />
               <WorldColliders />
-              <group key={`buildings-${resetVersion}`}>
-                <CrumblingBuilding origin={BUILDING_ORIGIN_A} />
-                <CrumblingBuilding origin={BUILDING_ORIGIN_B} />
-              </group>
+              <WorldBuildings groundY={GROUND_Y} />
               <Aircraft key={`aircraft-${resetVersion}`} debug={debug} />
               <RemoteFleet debug={debug} />
               <SceneReady onReady={handleSceneReady} />
