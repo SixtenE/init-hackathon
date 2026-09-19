@@ -54,22 +54,30 @@ async function main() {
   const welcome = await a.waitFor((msg) => msg.type === "welcome");
   if (!Number.isInteger(welcome.id)) throw new Error("welcome missing id");
   a.ws.send(JSON.stringify({ type: "hello", name: "Test-Pilot" }));
-  a.ws.send(JSON.stringify({ type: "input", seq: 1, throttle: 1, turn: 0, pitch: 0 }));
+  a.ws.send(JSON.stringify({ type: "input", seq: 1, throttle: 1, turn: 0, pitch: 1 }));
 
-  const moving = await a.waitFor(
+  const airborne = await a.waitFor(
     (msg) =>
       msg.type === "state" &&
       Array.isArray(msg.players) &&
-      msg.players.some((p) => p.id === welcome.id && p.name === "Test-Pilot" && p.airspeed > 1),
+      msg.players.some(
+        (p) =>
+          p.id === welcome.id &&
+          p.name === "Test-Pilot" &&
+          p.grounded === false &&
+          p.y > -58 &&
+          p.airspeed > 10,
+      ),
     8000,
   );
-  const me = moving.players.find((p) => p.id === welcome.id);
+  const me = airborne.players.find((p) => p.id === welcome.id);
   if (me.y === undefined || me.qw === undefined) throw new Error("state missing pose");
 
   const b = await connect();
   const welcomeB = await b.waitFor((msg) => msg.type === "welcome");
   const both = await a.waitFor(
-    (msg) => msg.type === "state" && msg.players.length >= 2,
+    (msg) =>
+      msg.type === "state" && msg.players.some((p) => p.id === welcomeB.id),
     4000,
   );
   if (!both.players.some((p) => p.id === welcomeB.id)) {
@@ -90,6 +98,8 @@ async function main() {
     playerA: welcome.id,
     playerB: welcomeB.id,
     airspeed: me.airspeed.toFixed(2),
+    altitude: me.y.toFixed(2),
+    grounded: me.grounded,
   });
 }
 

@@ -36,6 +36,15 @@ constexpr float kInertia = 2.8f;
 constexpr float kHalfPlayX = kWorldWidth / 2.0f - 6.2f;
 constexpr float kMaxY = kWorldHeight / 2.0f - 4.0f;
 constexpr float kAirborneEpsilon = 0.12f;
+// Distance from the body origin to the main gear along -Z. Used so pitching
+// on the runway rotates around the wheels instead of driving the tail into
+// the ground.
+constexpr float kMainGearArm = 5.7f;
+// Constant runway deceleration. Must stay far below engine acceleration or
+// the aircraft never reaches rotation speed.
+constexpr float kRollingDeceleration = 0.45f;
+constexpr float kWheelLateralDamping = 8.0f;
+constexpr float kRotateSpeed = 10.0f;
 
 std::string json_escape(std::string_view value) {
   std::string out;
@@ -204,6 +213,14 @@ void GameWorld::simulate_player(Player& player, float dt) {
     } else {
       player.pitch_target = damp(player.pitch_target, 0.0f, 0.65f, dt);
     }
+    // Keep the nose near level until there is enough speed to rotate. Holding
+    // space from a standstill used to point the thrust vector up and stall the
+    // takeoff roll.
+    if (player.grounded) {
+      const float forward_airspeed = std::max(0.0f, player.linear_velocity.dot(forward));
+      const float rotate = clamp(forward_airspeed / kRotateSpeed, 0.0f, 1.0f);
+      player.pitch_target = clamp(player.pitch_target, -0.04f, lerp(0.06f, kMaxPitch, rotate));
+    }
   } else {
     player.throttle = 0;
     player.pitch_target = damp(player.pitch_target, 0.0f, 0.8f, dt);
@@ -213,7 +230,8 @@ void GameWorld::simulate_player(Player& player, float dt) {
   Vec3 torque{};
   if (!player.crashed) {
     const float forward_airspeed = std::max(0.0f, player.linear_velocity.dot(forward));
-    const float control_authority = clamp(forward_airspeed / kCruiseSpeed, 0.15f, 1.25f);
+    const float min_authority = player.grounded ? 0.45f : 0.15f;
+    const float control_authority = clamp(forward_airspeed / kCruiseSpeed, min_authority, 1.25f);
     const float speed = player.linear_velocity.length();
     const float pitch_angle = std::asin(clamp(forward.y, -1.0f, 1.0f));
     const float flight_path_pitch =
@@ -262,10 +280,15 @@ void GameWorld::simulate_player(Player& player, float dt) {
 
   player.position += player.linear_velocity * dt;
 
+  const Vec3 grounded_forward = player.rotation.rotate({0, 0, 1}).normalized();
+  const Vec3 grounded_right = player.rotation.rotate({1, 0, 0}).normalized();
+  const float pitch_angle = std::asin(clamp(grounded_forward.y, -1.0f, 1.0f));
+  const float rest_y = kSpawnY + kMainGearArm * std::max(0.0f, std::sin(pitch_angle));
+
   const bool was_grounded = player.grounded;
-  if (player.position.y <= kSpawnY) {
+  if (player.position.y <= rest_y) {
     const float impact = std::max(0.0f, -player.linear_velocity.y);
-    player.position.y = kSpawnY;
+    player.position.y = rest_y;
     if (!was_grounded && impact > kMaxSafeLandingSpeed) {
       crash(player, "Hard landing at " + [&] {
         char buf[32];
@@ -274,11 +297,17 @@ void GameWorld::simulate_player(Player& player, float dt) {
       }(), impact);
     }
     if (player.linear_velocity.y < 0) player.linear_velocity.y = 0;
-    player.linear_velocity.x *= std::exp(-3.5f * dt);
-    player.linear_velocity.z *= std::exp(-1.2f * dt);
+
+    const float lateral = player.linear_velocity.dot(grounded_right);
+    player.linear_velocity += grounded_right * (-lateral * (1.0f - std::exp(-kWheelLateralDamping * dt)));
+    if (player.linear_velocity.z > 0.0f) {
+      player.linear_velocity.z = std::max(0.0f, player.linear_velocity.z - kRollingDeceleration * dt);
+    } else {
+      player.linear_velocity.z = std::min(0.0f, player.linear_velocity.z + kRollingDeceleration * dt);
+    }
     player.grounded = true;
   } else {
-    player.grounded = player.position.y <= kSpawnY + kAirborneEpsilon;
+    player.grounded = player.position.y <= rest_y + kAirborneEpsilon;
   }
 
   if (player.position.x > kHalfPlayX || player.position.x < -kHalfPlayX) {
