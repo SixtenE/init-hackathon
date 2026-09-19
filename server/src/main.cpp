@@ -26,6 +26,10 @@ int parse_port(int argc, char** argv) {
     const int port = std::atoi(argv[1]);
     if (port > 0 && port < 65536) return port;
   }
+  if (const char* env = std::getenv("PORT")) {
+    const int port = std::atoi(env);
+    if (port > 0 && port < 65536) return port;
+  }
   return 8080;
 }
 }  // namespace

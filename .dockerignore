@@ -1,0 +1,10 @@
+**/node_modules
+**/dist
+**/build
+**/.DS_Store
+.git
+.gitignore
+*.md
+*.log
+assets-source
+server/build
