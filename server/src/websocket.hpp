@@ -14,7 +14,7 @@ class WebSocketServer {
  public:
   using Id = int;
 
-  explicit WebSocketServer(int port);
+  explicit WebSocketServer(int port, std::string static_root = {});
   ~WebSocketServer();
 
   WebSocketServer(const WebSocketServer&) = delete;
@@ -40,6 +40,9 @@ class WebSocketServer {
     bool handshake = false;
     bool joined = false;
     bool closing = false;
+    bool http = false;
+    int file_fd = -1;
+    uint64_t file_remaining = 0;
     std::string incoming;
     std::string outgoing;
     std::chrono::steady_clock::time_point last_activity{};
@@ -51,14 +54,22 @@ class WebSocketServer {
   void read_client(Client& client);
   void write_client(Client& client);
   void complete_handshake(Client& client);
+  void serve_static(Client& client, std::string_view method, std::string_view url_path);
+  void queue_http(Client& client, int status, std::string_view reason, std::string_view content_type,
+                  std::string_view body, std::string_view extra_headers = {}, bool head = false);
+  void serve_file(Client& client, const std::string& path, uint64_t size, std::string_view mime,
+                  bool head_only, bool cache_immutable);
+  void fill_file_chunk(Client& client);
   bool extract_frame(Client& client, std::string& message, bool& is_close, bool& is_ping);
   void queue_frame(Client& client, uint8_t opcode, std::string_view payload);
   void drop(Client& client, bool notify);
   void rebuild_pollfds();
   void reap_idle();
   void mark_activity(Client& client);
+  bool has_pending_write(const Client& client) const;
 
   int port_ = 8080;
+  std::string static_root_;
   int listen_fd_ = -1;
   int next_id_ = 1;
   std::unordered_map<Id, Client> clients_;
