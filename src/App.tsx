@@ -1,6 +1,8 @@
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import { Html } from "@react-three/drei";
+import { FlightHud } from "./hud/FlightHud";
+import { attitudeFromQuaternion } from "./hud/telemetry";
 import { Portfolio } from "./Portfolio";
 import {
   BallCollider,
@@ -192,6 +194,7 @@ export default function App() {
       <div ref={canvasRef} className="relative h-screen w-full snap-start">
         <ConnectionBadge />
         <DebugPanel />
+        {started && <FlightHud />}
         <GameLoadingScreen
           loaded={sceneLoaded}
           inView={inView}
@@ -1059,8 +1062,9 @@ function Aircraft({ debug }: { debug: boolean }) {
     const position = body.translation();
 
     telemetryElapsed.current += delta;
-    if (telemetryElapsed.current >= 0.2) {
+    if (telemetryElapsed.current >= 0.05) {
       useFlightStore.getState().setTelemetry({
+        ...attitudeFromQuaternion(body.rotation()),
         airspeed: Math.hypot(velocity.x, velocity.y, velocity.z),
         throttle: throttle.current,
         verticalSpeed: velocity.y,
