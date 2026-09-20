@@ -1,4 +1,5 @@
 import rawMap from "./map.json";
+import { isCityModelId, type CityModelId } from "./cityAssetCatalog";
 
 export type MapBuilding = {
   id: string;
@@ -6,12 +7,14 @@ export type MapBuilding = {
   x: number;
   /** World Z of the building centre. Y is the ground plane. */
   z: number;
-  /** Footprint width in crumbling-block cells. */
+  /** Footprint width in building-grid cells. */
   width: number;
-  /** Height in crumbling-block cells (storeys). */
+  /** Height in building-grid cells (storeys). */
   floors: number;
-  /** Footprint depth in crumbling-block cells. */
+  /** Footprint depth in building-grid cells. */
   depth: number;
+  model: CityModelId;
+  rotation: number;
 };
 
 export type GameMap = {
@@ -37,6 +40,12 @@ function parseBuilding(value: unknown, index: number): MapBuilding {
   if (typeof building.x !== "number" || typeof building.z !== "number") {
     throw new Error(`Map building ${building.id} needs numeric x and z`);
   }
+  if (!isCityModelId(building.model)) {
+    throw new Error(`Map building ${building.id} has an unknown city model`);
+  }
+  if (building.rotation !== undefined && typeof building.rotation !== "number") {
+    throw new Error(`Map building ${building.id} rotation must be numeric`);
+  }
   return {
     id: building.id,
     x: building.x,
@@ -44,6 +53,8 @@ function parseBuilding(value: unknown, index: number): MapBuilding {
     width: assertPositiveInt(building.width, `${building.id}.width`),
     floors: assertPositiveInt(building.floors, `${building.id}.floors`),
     depth: assertPositiveInt(building.depth, `${building.id}.depth`),
+    model: building.model,
+    rotation: building.rotation ?? 0,
   };
 }
 

@@ -12,6 +12,9 @@ dist
 dist-ssr
 *.local
 
+# Local source asset packs (selected runtime assets live in public/models)
+assets-source/
+
 # C++ game server
 server/build/
 

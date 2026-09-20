@@ -1,14 +1,11 @@
-import { useFlightStore } from "../flightStore";
-import { CrumblingBuilding } from "./CrumblingBuilding";
+import { SolidBuilding } from "./SolidBuilding";
 import { gameMap } from "./map";
 
 export function WorldBuildings({ groundY }: { groundY: number }) {
-  const resetVersion = useFlightStore((state) => state.resetVersion);
-
   return (
-    <group key={`buildings-${resetVersion}`}>
+    <group>
       {gameMap.buildings.map((building) => (
-        <CrumblingBuilding key={building.id} building={building} groundY={groundY} />
+        <SolidBuilding key={building.id} building={building} groundY={groundY} />
       ))}
     </group>
   );
