@@ -854,14 +854,20 @@ function Aircraft({ debug }: { debug: boolean }) {
     });
   };
 
-  const crashPlane = (reason: string, impactSpeed: number) => {
+  const crashPlane = (reason: string) => {
     if (crashed.current) return;
     crashed.current = true;
     throttle.current = 0;
     const body = bodyRef.current;
     if (body) {
-      const impulse = body.mass() * Math.min(impactSpeed, 20) * 0.08;
-      body.applyTorqueImpulse({ x: impulse * 0.35, y: impulse * 0.2, z: impulse }, true);
+      const velocity = body.linvel();
+      const residualVelocity = new THREE.Vector3(velocity.x, velocity.y, velocity.z).clampLength(0, 0.1);
+      body.setLinvel(residualVelocity, true);
+      body.setAngvel({ x: 0, y: 0, z: 0 }, true);
+      body.resetForces(true);
+      body.resetTorques(true);
+      body.setLinearDamping(100);
+      body.setAngularDamping(100);
     }
     const explosionPosition = new THREE.Vector3(0, 2, -5.5);
     if (ref.current) {
@@ -883,13 +889,13 @@ function Aircraft({ debug }: { debug: boolean }) {
       groundContacts.current += 1;
       const impactSpeed = Math.max(0, -velocity.y);
       if (impactSpeed > MAX_SAFE_LANDING_SPEED) {
-        crashPlane(`Hard landing at ${Math.round(unitsToFpm(impactSpeed))} ft/min`, impactSpeed);
+        crashPlane(`Hard landing at ${Math.round(unitsToFpm(impactSpeed))} ft/min`);
       }
       return;
     }
 
-    if (surface === "building" || surface === "building-debris") {
-      crashPlane("Collision with a building", velocity.length());
+    if (surface === "building") {
+      crashPlane("Collision with a building");
       return;
     }
 
@@ -899,9 +905,9 @@ function Aircraft({ debug }: { debug: boolean }) {
     if (surface === "ceiling") impactSpeed = Math.max(0, velocity.y);
 
     if (surface.startsWith("wall") && impactSpeed > MAX_SAFE_WALL_IMPACT) {
-      crashPlane("Collision with the wall", impactSpeed);
+      crashPlane("Collision with the wall");
     } else if (surface === "ceiling" && impactSpeed > MAX_SAFE_WALL_IMPACT) {
-      crashPlane("Collision with the ceiling", impactSpeed);
+      crashPlane("Collision with the ceiling");
     }
   };
 
@@ -1112,7 +1118,9 @@ function Aircraft({ debug }: { debug: boolean }) {
       {debug && <LocalEntityBounds target={modelRef} />}
       <GroundShadow target={ref} />
       <ChaseCamera target={ref} body={bodyRef} />
-      <Explosion ref={explosionRef} groundY={GROUND_Y} />
+      <Suspense fallback={null}>
+        <Explosion ref={explosionRef} groundY={GROUND_Y} />
+      </Suspense>
     </>
   );
 }
@@ -1190,7 +1198,9 @@ function RemoteAircraft({ playerId, debug }: { playerId: number; debug: boolean 
         <PilotLabel playerId={playerId} />
       </group>
       {debug && <LocalEntityBounds target={modelRef} />}
-      <Explosion key={spawn} ref={explosionRef} groundY={GROUND_Y} />
+      <Suspense fallback={null}>
+        <Explosion key={spawn} ref={explosionRef} groundY={GROUND_Y} />
+      </Suspense>
     </>
   );
 }

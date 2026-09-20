@@ -6,11 +6,11 @@ export type MapBuilding = {
   x: number;
   /** World Z of the building centre. Y is the ground plane. */
   z: number;
-  /** Footprint width in crumbling-block cells. */
+  /** Footprint width in building-grid cells. */
   width: number;
-  /** Height in crumbling-block cells (storeys). */
+  /** Height in building-grid cells (storeys). */
   floors: number;
-  /** Footprint depth in crumbling-block cells. */
+  /** Footprint depth in building-grid cells. */
   depth: number;
 };
 

@@ -25,6 +25,14 @@ const SCORCH_URL = `${PARTICLE_ROOT}/scorch_01.png`;
 const SPARK_URLS = Array.from({ length: 7 }, (_, index) => `${PARTICLE_ROOT}/spark_0${index + 1}.png`);
 const SMOKE_URLS = Array.from({ length: 10 }, (_, index) => `${PARTICLE_ROOT}/smoke_${String(index + 1).padStart(2, "0")}.png`);
 const DIRT_URLS = Array.from({ length: 3 }, (_, index) => `${PARTICLE_ROOT}/dirt_0${index + 1}.png`);
+const EXPLOSION_TEXTURE_URLS = [
+  FLARE_URL,
+  CORE_URL,
+  SCORCH_URL,
+  ...SPARK_URLS,
+  ...SMOKE_URLS,
+  ...DIRT_URLS,
+];
 
 type FlipbookBillboardProps = {
   url: string;
@@ -537,6 +545,8 @@ export const Explosion = forwardRef<ExplosionHandle, ExplosionProps>(function Ex
   { scale = 1, groundY = 0 },
   ref,
 ) {
+  // Load the effect with the scene so triggering it cannot suspend and blank the canvas.
+  useTexture(EXPLOSION_TEXTURE_URLS);
   const nextId = useRef(0);
   const [active, setActive] = useState<{ id: number; position: THREE.Vector3 } | null>(null);
 
