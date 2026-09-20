@@ -1,8 +1,7 @@
+import { useMemo } from "react";
 import { CuboidCollider, RigidBody } from "@react-three/rapier";
 import { CityBuildingModel } from "./CityBuildingModel";
-import type { MapBuilding } from "./map";
-
-const BLOCK = 3.1;
+import { BUILDING_CELL, type MapBuilding } from "./map";
 
 export function SolidBuilding({
   building,
@@ -11,9 +10,13 @@ export function SolidBuilding({
   building: MapBuilding;
   groundY: number;
 }) {
-  const width = building.width * BLOCK;
-  const height = building.floors * BLOCK;
-  const depth = building.depth * BLOCK;
+  const width = building.width * BUILDING_CELL;
+  const height = building.floors * BUILDING_CELL;
+  const depth = building.depth * BUILDING_CELL;
+  const size = useMemo(
+    () => [width, height, depth] as [number, number, number],
+    [width, height, depth],
+  );
 
   return (
     <RigidBody
@@ -30,7 +33,7 @@ export function SolidBuilding({
         friction={0.7}
         restitution={0.02}
       />
-      <CityBuildingModel model={building.model} size={[width, height, depth]} />
+      <CityBuildingModel model={building.model} size={size} />
     </RigidBody>
   );
 }

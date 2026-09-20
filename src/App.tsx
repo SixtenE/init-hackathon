@@ -19,6 +19,8 @@ import { samplePlayer } from "./net/snapshots";
 import { useGameConnection } from "./net/useGameConnection";
 import { Explosion, type ExplosionHandle } from "./vfx/Explosion";
 import { WorldBuildings } from "./world/WorldBuildings";
+import { WorldGround, cityGroundMaterial } from "./world/WorldGround";
+import { RaceCourse } from "./world/RaceCourse";
 
 const AirbusA320 = lazy(() =>
   import("./models/AirbusA320").then(({ AirbusA320: Component }) => ({
@@ -160,6 +162,12 @@ export default function App() {
       if ((event.metaKey || event.ctrlKey) && event.code === "KeyK") {
         event.preventDefault();
         if (!event.repeat) useFlightStore.getState().toggleDebug();
+        return;
+      }
+      if (event.code === "KeyR" && !event.metaKey && !event.ctrlKey && !event.repeat) {
+        if (!captureFlightKeys) return;
+        event.preventDefault();
+        useFlightStore.getState().resetFlight();
       }
     };
     window.addEventListener("keydown", handleShortcut);
@@ -218,6 +226,7 @@ export default function App() {
               <WorldCube debug={debug} />
               <WorldColliders />
               <WorldBuildings groundY={GROUND_Y} />
+              <RaceCourse groundY={GROUND_Y} />
               <Aircraft key={`aircraft-${resetVersion}`} debug={debug} />
               <RemoteFleet debug={debug} />
               <SceneReady onReady={handleSceneReady} />
@@ -408,7 +417,7 @@ function DebugPanel() {
       </div>
       <div>X {position.x.toFixed(1)} · Y {position.y.toFixed(1)} · Z {position.z.toFixed(1)}</div>
       <div>{crashed ? "CRASHED" : grounded ? "GROUND" : "AIRBORNE"} · client physics</div>
-      <div>W/S throttle · A/D turn · Space/Shift pitch</div>
+      <div>W/S throttle · A/D turn · Space/Shift pitch · R restart</div>
     </div>
   );
 }
@@ -464,7 +473,7 @@ const SKY_MATERIAL = new THREE.ShaderMaterial({
     zenithColor: { value: new THREE.Color("#1f5fa8") },
     skyColor: { value: new THREE.Color("#6fb1e6") },
     horizonColor: { value: new THREE.Color("#dbe9f3") },
-    groundColor: { value: new THREE.Color("#4a5a66") },
+    groundColor: { value: new THREE.Color("#3c3f42") },
     sunColor: { value: new THREE.Color("#fff4d6") },
     sunDirection: { value: SUN_DIRECTION },
   },
@@ -522,64 +531,6 @@ function Skybox() {
   );
 }
 
-// Ground: a solid colour with an analytically anti-aliased grid. Drawing the
-// lines in the shader (rather than from a tiled texture) avoids the moiré and
-// shimmering that thin texture lines produce at grazing angles.
-const GROUND_GEOMETRY = new THREE.PlaneGeometry(WORLD_SIZE, WORLD_SIZE);
-const GROUND_MATERIAL = new THREE.ShaderMaterial({
-  uniforms: {
-    groundColor: { value: new THREE.Color("#5c7a4f") },
-    lineColor: { value: new THREE.Color("#8fae7f") },
-    cellSize: { value: 20 },
-    lineWidth: { value: 0.35 },
-    shadowCenter: { value: new THREE.Vector2(0, SPAWN_Z) },
-    shadowHalfSize: { value: SHADOW_HALF_SIZE.clone() },
-    shadowYaw: { value: 0 },
-    shadowOpacity: { value: SHADOW_MAX_OPACITY },
-  },
-  vertexShader: `
-    varying vec2 vWorldXZ;
-    void main() {
-      vec4 worldPosition = modelMatrix * vec4(position, 1.0);
-      vWorldXZ = worldPosition.xz;
-      gl_Position = projectionMatrix * viewMatrix * worldPosition;
-    }
-  `,
-  fragmentShader: `
-    uniform vec3 groundColor;
-    uniform vec3 lineColor;
-    uniform float cellSize;
-    uniform float lineWidth;
-    uniform vec2 shadowCenter;
-    uniform vec2 shadowHalfSize;
-    uniform float shadowYaw;
-    uniform float shadowOpacity;
-    varying vec2 vWorldXZ;
-    void main() {
-      vec2 coord = vWorldXZ / cellSize;
-      // Distance to the nearest grid line, in screen-space derivative units.
-      vec2 derivative = fwidth(coord);
-      vec2 grid = abs(fract(coord - 0.5) - 0.5) / max(derivative, vec2(1e-5));
-      float lineDistance = min(grid.x, grid.y);
-      float halfWidth = (lineWidth / cellSize) / max(min(derivative.x, derivative.y), 1e-5) * 0.5;
-      float line = 1.0 - smoothstep(halfWidth, halfWidth + 1.0, lineDistance);
-      // Fade the lines out in the distance so they never resolve to noise.
-      float fade = 1.0 - smoothstep(0.02, 0.2, max(derivative.x, derivative.y));
-      vec3 color = mix(groundColor, lineColor, line * fade);
-
-      vec2 delta = vWorldXZ - shadowCenter;
-      float s = sin(shadowYaw);
-      float c = cos(shadowYaw);
-      vec2 local = vec2(c * delta.x - s * delta.y, s * delta.x + c * delta.y);
-      float ellipse = length(local / max(shadowHalfSize, vec2(1e-4)));
-      float blob = 1.0 - smoothstep(0.18, 1.0, ellipse);
-      color *= 1.0 - shadowOpacity * blob;
-
-      gl_FragColor = vec4(color, 1.0);
-    }
-  `,
-});
-
 // The playable volume is still a box; its walls are drawn as a faint tint so
 // the player can see the boundary without it hiding the sky. The bottom face
 // is dropped so it cannot z-fight with the ground plane.
@@ -613,12 +564,7 @@ function WorldCube({ debug }: { debug: boolean }) {
     <>
       <Skybox />
       <group>
-        <mesh
-          geometry={GROUND_GEOMETRY}
-          material={GROUND_MATERIAL}
-          rotation-x={-Math.PI / 2}
-          position-y={GROUND_Y}
-        />
+        <WorldGround size={WORLD_SIZE} y={GROUND_Y} />
         <mesh ref={ref} geometry={WORLD_GEOMETRY} material={WORLD_MATERIAL} />
       </group>
       {debug && <EntityBounds target={ref} />}
@@ -718,7 +664,7 @@ function LocalEntityBounds({ target }: { target: React.RefObject<THREE.Object3D 
 type KeyState = Record<string, boolean>;
 
 // Keys whose browser default (page scroll, button activation) must be suppressed.
-const FLIGHT_KEYS = new Set(["Space", "ShiftLeft", "ShiftRight", "KeyW", "KeyA", "KeyS", "KeyD"]);
+const FLIGHT_KEYS = new Set(["Space", "ShiftLeft", "ShiftRight", "KeyW", "KeyA", "KeyS", "KeyD", "KeyR"]);
 
 function useKeyboard(): React.RefObject<KeyState> {
   const keys = useRef<KeyState>({});
@@ -789,7 +735,7 @@ function GroundShadow({ target }: { target: React.RefObject<THREE.Object3D | nul
     const altitudeRatio = THREE.MathUtils.clamp(altitude / SHADOW_MAX_ALTITUDE, 0, 1);
     const spread = THREE.MathUtils.lerp(1, 1.7, altitudeRatio);
 
-    const uniforms = GROUND_MATERIAL.uniforms;
+    const uniforms = cityGroundMaterial.uniforms;
     uniforms.shadowCenter.value.set(
       shadowWorldPosition.x + shadowOffset.x,
       shadowWorldPosition.z + shadowOffset.z,
@@ -1059,7 +1005,7 @@ function Aircraft({ debug }: { debug: boolean }) {
     const position = body.translation();
 
     telemetryElapsed.current += delta;
-    if (telemetryElapsed.current >= 0.2) {
+    if (telemetryElapsed.current >= 0.1) {
       useFlightStore.getState().setTelemetry({
         airspeed: Math.hypot(velocity.x, velocity.y, velocity.z),
         throttle: throttle.current,
@@ -1067,6 +1013,7 @@ function Aircraft({ debug }: { debug: boolean }) {
         angleOfAttack: angleOfAttack.current,
         grounded: groundContacts.current > 0,
         position: { x: position.x, y: position.y, z: position.z },
+        heading: Math.atan2(forward.x, forward.z),
       });
       telemetryElapsed.current = 0;
     }

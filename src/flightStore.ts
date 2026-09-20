@@ -11,11 +11,41 @@ type FlightTelemetry = {
   angleOfAttack: number;
   grounded: boolean;
   position: { x: number; y: number; z: number };
+  /** Compass heading in radians about +Y; 0 faces +Z, increasing toward +X. */
+  heading: number;
 };
 
 export type ConnectionStatus = "disconnected" | "connecting" | "connected";
 
+export type RaceStatus = "ready" | "racing" | "finished";
+
+export type RaceState = {
+  status: RaceStatus;
+  /** Index of the gate the pilot must fly through next. */
+  nextGate: number;
+  gateCount: number;
+  startTime: number | null;
+  finishTime: number | null;
+  bestTime: number | null;
+  /** Elapsed ms at each passed gate, in order. */
+  splits: number[];
+};
+
+const initialRace = (gateCount: number): RaceState => ({
+  status: "ready",
+  nextGate: 0,
+  gateCount,
+  startTime: null,
+  finishTime: null,
+  bestTime: null,
+  splits: [],
+});
+
 type FlightState = FlightTelemetry & {
+  race: RaceState;
+  passGate: (index: number, now: number) => void;
+  resetRace: () => void;
+  setGateCount: (count: number) => void;
   debug: boolean;
   fps: number;
   crashed: boolean;
@@ -45,6 +75,7 @@ export const useFlightStore = create<FlightState>((set) => ({
   angleOfAttack: 0,
   grounded: false,
   position: { x: 0, y: 0, z: 0 },
+  heading: 0,
   crashed: false,
   crashReason: null,
   resetVersion: 0,
@@ -52,6 +83,37 @@ export const useFlightStore = create<FlightState>((set) => ({
   localPlayerId: null,
   players: [],
   playerIds: [],
+  race: initialRace(0),
+  setGateCount: (count) =>
+    set((state) => (state.race.gateCount === count ? state : { race: initialRace(count) })),
+  passGate: (index, now) =>
+    set((state) => {
+      const race = state.race;
+      if (state.crashed || race.status === "finished" || index !== race.nextGate) return state;
+      const startTime = race.startTime ?? now;
+      const elapsed = now - startTime;
+      const splits = [...race.splits, elapsed];
+      const finished = index === race.gateCount - 1;
+      return {
+        race: {
+          ...race,
+          status: finished ? "finished" : "racing",
+          nextGate: finished ? race.gateCount : index + 1,
+          startTime,
+          finishTime: finished ? elapsed : null,
+          bestTime: finished
+            ? race.bestTime == null
+              ? elapsed
+              : Math.min(race.bestTime, elapsed)
+            : race.bestTime,
+          splits,
+        },
+      };
+    }),
+  resetRace: () =>
+    set((state) => ({
+      race: { ...initialRace(state.race.gateCount), bestTime: state.race.bestTime },
+    })),
   toggleDebug: () => set((state) => ({ debug: !state.debug })),
   crash: (reason) => set((state) => state.crashed ? state : {
     crashed: true,
@@ -64,9 +126,11 @@ export const useFlightStore = create<FlightState>((set) => ({
     angleOfAttack: 0,
     grounded: false,
     position: { x: 0, y: 0, z: 0 },
+    heading: 0,
     crashed: false,
     crashReason: null,
     resetVersion: state.resetVersion + 1,
+    race: { ...initialRace(state.race.gateCount), bestTime: state.race.bestTime },
   })),
   setFps: (fps) => set({ fps }),
   setTelemetry: (telemetry) => set(telemetry),

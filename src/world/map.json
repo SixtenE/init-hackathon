@@ -1,10 +1,38 @@
 {
-  "name": "low-poly-city-demo",
-  "buildings": [
+  "name": "low-poly-city",
+  "grid": {
+    "avenueXs": [-240, -192, -144, -96, -48, 0, 48, 96, 144, 192, 240],
+    "streetZs": [20, 60, 100, 140, 180, 220, 260, 300, 340, 380],
+    "avenueWidth": 16,
+    "centerAvenueWidth": 24,
+    "streetWidth": 12,
+    "sidewalkWidth": 2.2,
+    "approachZ": -96
+  },
+  "parks": [
+    { "id": "west-green", "col": 2, "row": 4 },
+    { "id": "east-green", "col": 7, "row": 6 }
+  ],
+  "course": {
+    "name": "Downtown Circuit",
+    "gates": [
+      { "x": 0, "y": 34, "z": 80, "yaw": 0, "width": 28, "height": 18 },
+      { "x": 0, "y": 20, "z": 160, "yaw": 0, "width": 22, "height": 14 },
+      { "x": 0, "y": 56, "z": 260, "yaw": 0, "width": 26, "height": 18 },
+      { "x": 60, "y": 82, "z": 370, "yaw": 0.9, "width": 30, "height": 20 },
+      { "x": 150, "y": 84, "z": 405, "yaw": 1.5708, "width": 30, "height": 20 },
+      { "x": 244, "y": 62, "z": 300, "yaw": 3.1416, "width": 20, "height": 18 },
+      { "x": 244, "y": 38, "z": 160, "yaw": 3.1416, "width": 20, "height": 14 },
+      { "x": 205, "y": 34, "z": 20, "yaw": 3.7, "width": 28, "height": 18 },
+      { "x": 100, "y": 22, "z": -60, "yaw": 4.7124, "width": 28, "height": 14 },
+      { "x": 0, "y": 30, "z": -70, "yaw": 4.7124, "width": 30, "height": 20 }
+    ]
+  },
+  "landmarks": [
     {
       "id": "gate-west",
-      "x": -20,
-      "z": 98,
+      "x": -26,
+      "z": 80,
       "width": 4,
       "floors": 10,
       "depth": 4,
@@ -13,8 +41,8 @@
     },
     {
       "id": "gate-east",
-      "x": 22,
-      "z": 100,
+      "x": 26,
+      "z": 80,
       "width": 4,
       "floors": 11,
       "depth": 3,
@@ -23,8 +51,8 @@
     },
     {
       "id": "west-low",
-      "x": -32,
-      "z": 118,
+      "x": -72,
+      "z": 80,
       "width": 6,
       "floors": 8,
       "depth": 4,
@@ -33,8 +61,8 @@
     },
     {
       "id": "east-low",
-      "x": 42,
-      "z": 122,
+      "x": 72,
+      "z": 80,
       "width": 5,
       "floors": 9,
       "depth": 4,
@@ -42,29 +70,9 @@
       "rotation": 1.5708
     },
     {
-      "id": "mid-west",
-      "x": -85,
-      "z": 135,
-      "width": 5,
-      "floors": 12,
-      "depth": 4,
-      "model": "tower-06",
-      "rotation": 0
-    },
-    {
-      "id": "mid-east",
-      "x": 84,
-      "z": 140,
-      "width": 4,
-      "floors": 16,
-      "depth": 5,
-      "model": "tower-07",
-      "rotation": 1.5708
-    },
-    {
       "id": "west-tower",
-      "x": -30,
-      "z": 144,
+      "x": -26,
+      "z": 120,
       "width": 4,
       "floors": 26,
       "depth": 4,
@@ -73,8 +81,8 @@
     },
     {
       "id": "twin-a",
-      "x": 20,
-      "z": 145,
+      "x": 18.4,
+      "z": 120,
       "width": 4,
       "floors": 28,
       "depth": 3,
@@ -83,8 +91,8 @@
     },
     {
       "id": "twin-b",
-      "x": 35.9,
-      "z": 145,
+      "x": 33.6,
+      "z": 120,
       "width": 4,
       "floors": 28,
       "depth": 3,
@@ -92,19 +100,9 @@
       "rotation": 0
     },
     {
-      "id": "east-annex",
-      "x": 52,
-      "z": 146,
-      "width": 3,
-      "floors": 14,
-      "depth": 4,
-      "model": "tower-09",
-      "rotation": 1.5708
-    },
-    {
       "id": "west-office",
-      "x": -50,
-      "z": 148,
+      "x": -72,
+      "z": 120,
       "width": 5,
       "floors": 18,
       "depth": 4,
@@ -112,29 +110,39 @@
       "rotation": 0
     },
     {
-      "id": "east-high",
-      "x": 68,
-      "z": 160,
-      "width": 4,
-      "floors": 22,
+      "id": "east-annex",
+      "x": 72,
+      "z": 120,
+      "width": 3,
+      "floors": 14,
       "depth": 4,
-      "model": "tower-07",
+      "model": "tower-09",
+      "rotation": 1.5708
+    },
+    {
+      "id": "mid-west",
+      "x": -120,
+      "z": 120,
+      "width": 5,
+      "floors": 12,
+      "depth": 4,
+      "model": "tower-06",
       "rotation": 0
     },
     {
-      "id": "west-wide",
-      "x": -68,
-      "z": 162,
-      "width": 6,
-      "floors": 14,
+      "id": "mid-east",
+      "x": 120,
+      "z": 120,
+      "width": 4,
+      "floors": 16,
       "depth": 5,
-      "model": "tower-11",
+      "model": "tower-07",
       "rotation": 1.5708
     },
     {
       "id": "west-slim",
-      "x": -18,
-      "z": 170,
+      "x": -26,
+      "z": 160,
       "width": 3,
       "floors": 30,
       "depth": 3,
@@ -143,8 +151,8 @@
     },
     {
       "id": "east-rear",
-      "x": 28,
-      "z": 172,
+      "x": 26,
+      "z": 160,
       "width": 6,
       "floors": 12,
       "depth": 4,
@@ -152,19 +160,29 @@
       "rotation": 1.5708
     },
     {
-      "id": "far-east",
-      "x": 48,
-      "z": 205,
+      "id": "west-wide",
+      "x": -72,
+      "z": 160,
+      "width": 6,
+      "floors": 14,
+      "depth": 5,
+      "model": "tower-11",
+      "rotation": 1.5708
+    },
+    {
+      "id": "east-high",
+      "x": 72,
+      "z": 160,
       "width": 4,
-      "floors": 18,
+      "floors": 22,
       "depth": 4,
-      "model": "tower-10",
+      "model": "tower-07",
       "rotation": 0
     },
     {
       "id": "far-west",
-      "x": -42,
-      "z": 208,
+      "x": -26,
+      "z": 200,
       "width": 5,
       "floors": 20,
       "depth": 3,
@@ -173,12 +191,22 @@
     },
     {
       "id": "landmark",
-      "x": 12,
-      "z": 230,
+      "x": 26,
+      "z": 200,
       "width": 3,
       "floors": 34,
       "depth": 3,
       "model": "tower-02",
+      "rotation": 0
+    },
+    {
+      "id": "far-east",
+      "x": 72,
+      "z": 200,
+      "width": 4,
+      "floors": 18,
+      "depth": 4,
+      "model": "tower-10",
       "rotation": 0
     }
   ]
