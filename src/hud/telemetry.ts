@@ -11,4 +11,6 @@ export function attitudeFromQuaternion(q: { x: number; y: number; z: number; w: 
   };
 }
 export const toKnots = (speed: number) => Math.max(0, speed * 3 / 0.514444);
-export const toFeetAgl = (worldY: number) => Math.max(0, (worldY + 60) * 3 / 0.3048);
+// Ground sits at -WORLD_HEIGHT/2. Keep this offset in sync with WORLD_HEIGHT in App.tsx.
+const GROUND_Y = -180;
+export const toFeetAgl = (worldY: number) => Math.max(0, (worldY - GROUND_Y) * 3 / 0.3048);
