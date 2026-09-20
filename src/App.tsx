@@ -1,4 +1,4 @@
-import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import { Html } from "@react-three/drei";
 import { FlightHud } from "./hud/FlightHud";
@@ -12,10 +12,11 @@ import {
   RigidBody,
   useBeforePhysicsStep,
   type CollisionEnterPayload,
+  type IntersectionEnterPayload,
   type RapierRigidBody,
 } from "@react-three/rapier";
 import * as THREE from "three";
-import { useFlightStore } from "./flightStore";
+import { useFlightStore, PLAYER_SPAWN_GRACE_MS } from "./flightStore";
 import { gameClient } from "./net/gameClient";
 import { samplePlayer } from "./net/snapshots";
 import { useGameConnection } from "./net/useGameConnection";
@@ -115,6 +116,9 @@ const MAX_SAFE_WALL_IMPACT = 5;
 const PHYSICS_STEP = 1 / 60;
 const POSE_SEND_INTERVAL = 1 / 20;
 
+/** Until-timestamp (performance.now) while a remote is spawn-protected. */
+const remoteGraceUntil = new Map<number, number>();
+
 // A projected blob shadow communicates altitude without the cost of enabling
 // shadow maps for the detailed aircraft model. Painted into the ground shader
 // so it cannot z-fight with the floor.
@@ -202,7 +206,6 @@ export default function App() {
     <>
       <Portfolio />
       <div ref={canvasRef} className="relative h-screen w-full snap-start">
-        <ConnectionBadge />
         <DebugPanel />
         {started && <FlightHud />}
         <GameLoadingScreen
@@ -299,38 +302,6 @@ function GameLoadingScreen({
       }}
     >
       {loaded ? "Ready" : "Loading"}
-    </div>
-  );
-}
-
-function ConnectionBadge() {
-  const connection = useFlightStore((state) => state.connection);
-  const remotes = useFlightStore((state) => state.playerIds.length);
-  const live = connection === "connected";
-  const playerCount = live ? remotes + 1 : remotes;
-
-  return (
-    <div
-      style={{
-        position: "absolute",
-        top: 8,
-        right: 8,
-        zIndex: 3,
-        padding: "6px 10px",
-        fontFamily: "system-ui, sans-serif",
-        fontSize: 13,
-        color: live ? "#d7ffe6" : "#ffe9c2",
-        background: live ? "rgba(0, 20, 8, 0.55)" : "rgba(28, 16, 0, 0.55)",
-        border: live ? "1px solid rgba(120, 255, 170, 0.35)" : "1px solid rgba(255, 196, 120, 0.4)",
-        borderRadius: 6,
-        pointerEvents: "none",
-      }}
-    >
-      {live
-        ? `LIVE · ${gameClient.playerName} · ${playerCount} ${playerCount === 1 ? "pilot" : "pilots"}`
-        : connection === "connecting"
-          ? "Connecting to game server"
-          : "Offline · physics still local"}
     </div>
   );
 }
@@ -757,6 +728,76 @@ function GroundShadow({ target }: { target: React.RefObject<THREE.Object3D | nul
   return null;
 }
 
+function AircraftColliders({
+  sensor = false,
+  name,
+}: {
+  sensor?: boolean;
+  name?: string;
+}) {
+  return (
+    <>
+      <CapsuleCollider
+        name={name ?? "aircraft-fuselage"}
+        sensor={sensor}
+        args={[5.4, 0.82]}
+        position={[0, 2.05, -6.3]}
+        rotation={[Math.PI / 2, 0, 0]}
+        friction={0.35}
+        restitution={0.04}
+      />
+      <CuboidCollider
+        name={name ?? "aircraft-wings"}
+        sensor={sensor}
+        args={[6, 0.16, 1.25]}
+        position={[0, 1.72, -5.2]}
+      />
+      <CuboidCollider
+        name={name ?? "aircraft-tailplane"}
+        sensor={sensor}
+        args={[2.4, 0.12, 0.7]}
+        position={[0, 2.25, -11.25]}
+      />
+      <CuboidCollider
+        name={name ?? "aircraft-tail"}
+        sensor={sensor}
+        args={[0.14, 1.25, 1.1]}
+        position={[0, 3, -11.2]}
+      />
+      <BallCollider
+        name={name ?? "aircraft-gear"}
+        sensor={sensor}
+        args={[0.22]}
+        position={[-2.05, 0.59, -5.7]}
+        friction={0.1}
+      />
+      <BallCollider
+        name={name ?? "aircraft-gear"}
+        sensor={sensor}
+        args={[0.22]}
+        position={[2.05, 0.59, -5.7]}
+        friction={0.1}
+      />
+      <BallCollider
+        name={name ?? "aircraft-gear"}
+        sensor={sensor}
+        args={[0.22]}
+        position={[0, 0.59, -1.8]}
+        friction={0.1}
+      />
+    </>
+  );
+}
+
+function isPlayerHitSurface(colliderName: string, bodyName: string): boolean {
+  return colliderName === "player" || bodyName.startsWith("player-");
+}
+
+function remoteIdFromHit(bodyName: string): number | undefined {
+  const match = /^player-(\d+)$/.exec(bodyName);
+  return match ? Number(match[1]) : undefined;
+}
+
 function Aircraft({ debug }: { debug: boolean }) {
   const bodyRef = useRef<RapierRigidBody>(null);
   const ref = useRef<THREE.Group>(null);
@@ -771,7 +812,13 @@ function Aircraft({ debug }: { debug: boolean }) {
   const poseSeq = useRef(0);
   const groundContacts = useRef(0);
   const crashed = useRef(false);
+  const spawnedAt = useRef(performance.now());
   const keys = useKeyboard();
+
+  useLayoutEffect(() => {
+    spawnedAt.current = performance.now();
+    useFlightStore.getState().beginSpawnProtection(PLAYER_SPAWN_GRACE_MS);
+  }, []);
 
   const publishPose = () => {
     if (useFlightStore.getState().connection !== "connected") return;
@@ -867,6 +914,21 @@ function Aircraft({ debug }: { debug: boolean }) {
     if (surface === "ground") {
       groundContacts.current = Math.max(0, groundContacts.current - 1);
     }
+  };
+
+  const handleIntersectionEnter = (event: IntersectionEnterPayload) => {
+    const colliderName = event.other.colliderObject?.name ?? "";
+    const bodyName = event.other.rigidBodyObject?.name ?? "";
+    if (!isPlayerHitSurface(colliderName, bodyName)) return;
+    if (crashed.current) return;
+    const now = performance.now();
+    if (now - spawnedAt.current < PLAYER_SPAWN_GRACE_MS) return;
+    const remoteId = remoteIdFromHit(bodyName);
+    if (remoteId != null) {
+      const until = remoteGraceUntil.get(remoteId);
+      if (until != null && now < until) return;
+    }
+    crashPlane("Collision with another aircraft");
   };
 
   useBeforePhysicsStep(() => {
@@ -1046,26 +1108,14 @@ function Aircraft({ debug }: { debug: boolean }) {
         canSleep={false}
         onCollisionEnter={handleCollisionEnter}
         onCollisionExit={handleCollisionExit}
+        onIntersectionEnter={handleIntersectionEnter}
       >
         <group ref={ref}>
           <group ref={modelRef}>
             <AirbusA320 />
           </group>
         </group>
-        <CapsuleCollider
-          name="aircraft-fuselage"
-          args={[5.4, 0.82]}
-          position={[0, 2.05, -6.3]}
-          rotation={[Math.PI / 2, 0, 0]}
-          friction={0.35}
-          restitution={0.04}
-        />
-        <CuboidCollider name="aircraft-wings" args={[6, 0.16, 1.25]} position={[0, 1.72, -5.2]} />
-        <CuboidCollider name="aircraft-tailplane" args={[2.4, 0.12, 0.7]} position={[0, 2.25, -11.25]} />
-        <CuboidCollider name="aircraft-tail" args={[0.14, 1.25, 1.1]} position={[0, 3, -11.2]} />
-        <BallCollider name="aircraft-gear" args={[0.22]} position={[-2.05, 0.59, -5.7]} friction={0.1} />
-        <BallCollider name="aircraft-gear" args={[0.22]} position={[2.05, 0.59, -5.7]} friction={0.1} />
-        <BallCollider name="aircraft-gear" args={[0.22]} position={[0, 0.59, -1.8]} friction={0.1} />
+        <AircraftColliders />
       </RigidBody>
       {debug && <LocalEntityBounds target={modelRef} />}
       <GroundShadow target={ref} />
@@ -1116,39 +1166,74 @@ function PilotLabel({ playerId }: { playerId: number }) {
 }
 
 function RemoteAircraft({ playerId, debug }: { playerId: number; debug: boolean }) {
-  const bodyRef = useRef<THREE.Group>(null);
+  const bodyRef = useRef<RapierRigidBody>(null);
   const modelRef = useRef<THREE.Group>(null);
+  const visualRef = useRef<THREE.Group>(null);
   const explosionRef = useRef<ExplosionHandle>(null);
   const crashed = useRef(false);
+  const lastSpawn = useRef<number | null>(null);
+  const [hitboxActive, setHitboxActive] = useState(true);
   const spawn = useFlightStore(
     (state) => state.players.find((player) => player.id === playerId)?.spawn ?? 0,
   );
 
-  useFrame(() => {
+  useEffect(() => {
+    remoteGraceUntil.set(playerId, performance.now() + PLAYER_SPAWN_GRACE_MS);
+    return () => {
+      remoteGraceUntil.delete(playerId);
+    };
+  }, [playerId]);
+
+  useBeforePhysicsStep(() => {
     const pose = samplePlayer(playerId);
     const body = bodyRef.current;
     if (!pose || !body) return;
 
-    body.position.set(pose.x, pose.y, pose.z);
-    body.quaternion.set(pose.qx, pose.qy, pose.qz, pose.qw);
+    if (lastSpawn.current !== pose.spawn) {
+      lastSpawn.current = pose.spawn;
+      remoteGraceUntil.set(playerId, performance.now() + PLAYER_SPAWN_GRACE_MS);
+    }
+
+    body.setNextKinematicTranslation({ x: pose.x, y: pose.y, z: pose.z });
+    body.setNextKinematicRotation({ x: pose.qx, y: pose.qy, z: pose.qz, w: pose.qw });
+  });
+
+  useFrame(() => {
+    const pose = samplePlayer(playerId);
+    if (!pose) return;
 
     if (pose.crashed && !crashed.current) {
       crashed.current = true;
+      setHitboxActive(false);
       const explosionPosition = new THREE.Vector3(0, 2, -5.5);
-      body.localToWorld(explosionPosition);
+      if (visualRef.current) {
+        visualRef.current.localToWorld(explosionPosition);
+      }
       explosionRef.current?.trigger(explosionPosition);
     }
-    if (!pose.crashed) crashed.current = false;
+    if (!pose.crashed && crashed.current) {
+      crashed.current = false;
+      setHitboxActive(true);
+    }
   });
 
   return (
     <>
-      <group ref={bodyRef} position={[0, SPAWN_Y, SPAWN_Z]}>
-        <group ref={modelRef}>
-          <AirbusA320 />
+      <RigidBody
+        ref={bodyRef}
+        type="kinematicPosition"
+        colliders={false}
+        name={`player-${playerId}`}
+        position={[0, SPAWN_Y, SPAWN_Z]}
+      >
+        <group ref={visualRef}>
+          <group ref={modelRef}>
+            <AirbusA320 />
+          </group>
+          <PilotLabel playerId={playerId} />
         </group>
-        <PilotLabel playerId={playerId} />
-      </group>
+        {hitboxActive && <AircraftColliders sensor name="player" />}
+      </RigidBody>
       {debug && <LocalEntityBounds target={modelRef} />}
       <Suspense fallback={null}>
         <Explosion key={spawn} ref={explosionRef} groundY={GROUND_Y} />

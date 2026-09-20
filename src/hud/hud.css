@@ -17,9 +17,10 @@
 .throttle{width:145px}.throttle>div:first-child{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px}.throttle strong{font-weight:400;font-size:17px}.throttle-track{height:5px;background:#dbffe532}.throttle-track i{display:block;height:100%;background:currentColor;transition:width .1s linear}.vertical-speed{white-space:nowrap}
 .hud-controls{position:absolute;bottom:18px;left:12px;right:12px;text-align:center;font-size:11px;letter-spacing:.5px;color:#e5ece9;text-shadow:0 1px 3px #000}.hud-controls b{padding:0 12px;font-weight:400}
 .hud-warning{min-height:22px;text-align:center;margin-top:12px;color:#ffcc70;font-size:15px;letter-spacing:3px;font-weight:600}
-.hud-reset{pointer-events:auto;position:absolute;right:16px;bottom:16px;z-index:3;border:1px solid #ffffff55;border-radius:5px;background:#14202ecc;color:#fff;padding:8px 16px;cursor:pointer;font:inherit;letter-spacing:.12em;text-transform:uppercase}
-.hud-reset:hover{border-color:#fff;background:#1c2c3d}
-.hud-reset:focus-visible{outline:2px solid #fff;outline-offset:3px}
+.hud-collision-status{position:absolute;top:52px;left:50%;transform:translateX(-50%);z-index:3;display:flex;flex-direction:column;align-items:center;gap:2px;padding:8px 16px;border-radius:6px;border:1px solid transparent;font-size:13px;letter-spacing:.14em;font-weight:700;text-align:center;white-space:nowrap;pointer-events:none}
+.hud-collision-status strong{font-weight:700;margin-left:6px;font-variant-numeric:tabular-nums}
+.hud-collision-status span{display:block;font-size:10px;letter-spacing:.18em;font-weight:500;opacity:.85;margin-top:2px}
+.hud-collision-status.is-protected{color:#1a1408;background:#ffcc66ee;border-color:#ffe9a8;box-shadow:0 0 0 1px #00000022,0 6px 18px #0006}
 .flight-hud--projected .hud-instruments{inset:0;width:auto;left:0;top:0;transform:none;filter:drop-shadow(0 1px 1px #07140980)}
 .flight-hud--projected .hud-heading{position:absolute;top:18px;left:50%;transform:translateX(-50%);margin:0;font-size:16px;letter-spacing:1px;opacity:.55}
 .flight-hud--projected .hud-mode{display:none}
@@ -35,7 +36,7 @@
 .flight-hud--projected .tape-value{font-size:16px}
 .flight-hud--projected .hud-bottom{position:absolute;left:22px;right:22px;bottom:42px;margin:0;opacity:.5}
 .flight-hud--projected .hud-warning{position:absolute;left:0;right:0;top:auto;bottom:282px;margin:0;font-size:13px}
-.flight-hud--projected .hud-reset{bottom:16px;right:16px;opacity:.78;font-size:12px;padding:7px 14px}
+.flight-hud--projected .hud-collision-status{top:48px}
 .flight-hud--projected .hud-controls{opacity:.38}
 .flight-hud--glass{--hud-ink:#f1f8ff}.flight-hud--glass .hud-instruments{top:auto;bottom:58px;transform:translateX(-50%);width:min(500px,94%);background:#091521eb;border:1px solid #91a9bb55;border-radius:12px;padding:15px 18px 2px;box-shadow:0 8px 28px #0005}.flight-hud--glass .hud-heading{margin-bottom:6px;font-size:17px}.flight-hud--glass .instrument-row{gap:5px}.flight-hud--glass .aircraft-reference{stroke:#ffe174}.flight-hud--glass .throttle{color:#8ee9e9}.flight-hud--glass .tape-background{fill:#1d3040}.flight-hud--glass .tape-window{fill:#080f18}.flight-hud--glass .hud-bottom{margin-top:8px}
 .flight-hud--minimal{--hud-ink:#f0faf7}.flight-hud--minimal .hud-instruments{top:auto;bottom:55px;transform:translateX(-50%);width:min(430px,94%)}.flight-hud--minimal .hud-heading{margin-bottom:0;text-shadow:0 1px 4px #000;font-size:17px}.minimal-row{display:grid;grid-template-columns:1fr 1.65fr 1fr;align-items:center;gap:10px}.hud-number{text-align:center;padding:12px 4px;background:#081622b8;border-radius:6px}.hud-number span,.hud-number small{display:block}.hud-number strong{display:block;font-size:28px;font-weight:400;margin:2px 0}.flight-hud--minimal .hud-bottom{background:#091622b8;padding:10px;border-radius:6px;margin:0}.gauge-rim{fill:none;stroke:#14242e;stroke-width:7}.flight-hud--minimal .aircraft-reference{stroke:#ffe174}.flight-hud--minimal .hud-warning{text-shadow:0 1px 3px #000}

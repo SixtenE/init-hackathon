@@ -1,4 +1,4 @@
-import { useId } from 'react';
+import { useEffect, useId, useState } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import { useFlightStore } from '../flightStore';
 import { toFeetAgl, toKnots } from './telemetry';
@@ -41,7 +41,33 @@ function Tape({ value, label, step }: { value: number; label: string; step: numb
 }
 
 export function FlightHud() {
-  const f = useFlightStore(useShallow(s => ({ pitch:s.pitch,bank:s.bank,heading:s.heading,airspeed:s.airspeed,throttle:s.throttle,y:s.position.y,verticalSpeed:s.verticalSpeed,crashed:s.crashed,crashReason:s.crashReason,grounded:s.grounded,angleOfAttack:s.angleOfAttack })));
+  const f = useFlightStore(useShallow(s => ({
+    pitch:s.pitch,bank:s.bank,heading:s.heading,airspeed:s.airspeed,throttle:s.throttle,
+    y:s.position.y,verticalSpeed:s.verticalSpeed,crashed:s.crashed,crashReason:s.crashReason,
+    grounded:s.grounded,angleOfAttack:s.angleOfAttack,spawnProtectedUntil:s.spawnProtectedUntil,
+  })));
+  const [now, setNow] = useState(() => performance.now());
+  const protectRemaining = Math.max(0, f.spawnProtectedUntil - now);
+  const protectedSpawn = !f.crashed && protectRemaining > 0;
+
+  useEffect(() => {
+    if (f.crashed || f.spawnProtectedUntil <= performance.now()) return;
+    let frame = 0;
+    const tick = () => {
+      setNow(performance.now());
+      frame = requestAnimationFrame(tick);
+    };
+    frame = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(frame);
+  }, [f.spawnProtectedUntil, f.crashed]);
+
+  useEffect(() => {
+    if (f.spawnProtectedUntil <= 0) return;
+    const delay = Math.max(0, f.spawnProtectedUntil - performance.now());
+    const id = window.setTimeout(() => setNow(performance.now()), delay);
+    return () => window.clearTimeout(id);
+  }, [f.spawnProtectedUntil]);
+
   const speed = toKnots(f.airspeed);
   const altitude = toFeetAgl(f.y);
   const throttle = Math.round(Math.max(0,Math.min(1,f.throttle))*100);
@@ -49,6 +75,7 @@ export function FlightHud() {
   const stall = !f.grounded && (speed <= 105 || f.angleOfAttack >= 0.42);
   const warning = f.crashed ? (f.crashReason ?? 'CRASHED') : stall ? 'STALL' : speed > 350 ? 'OVERSPEED' : '';
   const mode: string = DESIGN;
+  const protectSeconds = (protectRemaining / 1000).toFixed(1);
   return <div className={`flight-hud flight-hud--${mode}`} aria-label={`${mode} aircraft instruments`}>
     <div className="hud-instruments">
       <div className="hud-heading"><span>HDG</span> {heading}° <span className="hud-mode">{mode === 'projected' ? 'ATT' : mode === 'glass' ? 'PFD' : 'FLIGHT'}</span></div>
@@ -63,10 +90,17 @@ export function FlightHud() {
       </div>}
       <div className="hud-bottom"><div className="throttle"><div><span>THR</span><strong>{throttle}%</strong></div><div className="throttle-track" role="meter" aria-label="Throttle position" aria-valuemin={0} aria-valuemax={100} aria-valuenow={throttle}><i style={{width:`${throttle}%`}} /></div></div><div className="vertical-speed"><span>V/S</span> {f.verticalSpeed>=0?'+':''}{Math.round(f.verticalSpeed*3*196.85)} <span>FPM</span></div></div>
       <div className="hud-warning" role="status" aria-live="polite">{warning || (f.grounded ? 'ON GROUND' : '')}</div>
-      <button type="button" className="hud-reset" onClick={() => useFlightStore.getState().resetFlight()}>
-        Restart
-      </button>
+      {!f.crashed && protectedSpawn && (
+        <div
+          className="hud-collision-status is-protected"
+          role="status"
+          aria-live="polite"
+        >
+          SPAWN PROTECTION <strong>{protectSeconds}s</strong>
+          <span>player collision off</span>
+        </div>
+      )}
     </div>
-    <div className="hud-controls">W / S · THROTTLE <b>·</b> A / D · BANK <b>·</b> SPACE / SHIFT · PITCH <b>·</b> R · RESTART</div>
+    <div className="hud-controls">W / S THROTTLE <b></b> A / D BANK <b></b> SPACE / SHIFT PITCH <b></b> R RESTART</div>
   </div>;
 }

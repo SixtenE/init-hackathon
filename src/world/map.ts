@@ -1,5 +1,5 @@
 import rawMap from "./map.json";
-import { isCityModelId, type CityModelId } from "./cityAssetCatalog";
+import { isCityModelId, type CityModelId, type PropModelId } from "./cityAssetCatalog";
 
 export const BUILDING_CELL = 3.1;
 
@@ -87,6 +87,16 @@ export type RaceCourse = {
   obstacles: MapObstacle[];
 };
 
+export type MapProp = {
+  id: string;
+  x: number;
+  z: number;
+  rotation: number;
+  model: PropModelId;
+  /** Extra uniform scale on top of the model's default size. */
+  scale: number;
+};
+
 export type GameMap = {
   name: string;
   grid: CityGrid;
@@ -94,6 +104,8 @@ export type GameMap = {
   streets: MapStreet[];
   parks: MapPark[];
   lots: MapLot[];
+  trees: MapProp[];
+  cars: MapProp[];
   course: RaceCourse;
 };
 
@@ -467,6 +479,258 @@ function generateParks(grid: CityGrid, specs: ParkSpec[]): MapPark[] {
   });
 }
 
+const TREE_MODELS: PropModelId[] = ["tree-02", "tree-05"];
+const BUSH_MODEL: PropModelId = "tree-04";
+const CAR_MODELS: PropModelId[] = ["city-car", "city-car", "city-car", "pickup"];
+
+function streetAsphaltWidth(street: MapStreet, grid: CityGrid): number {
+  return Math.max(4, street.width - grid.sidewalkWidth * 2);
+}
+
+function alongRange(street: MapStreet): { start: number; end: number } {
+  if (street.axis === "x") {
+    return { start: street.x - street.length / 2, end: street.x + street.length / 2 };
+  }
+  return { start: street.z - street.length / 2, end: street.z + street.length / 2 };
+}
+
+function streetOpenRanges(street: MapStreet, grid: CityGrid, pad: number): { start: number; end: number }[] {
+  const { start, end } = alongRange(street);
+  const crosses = street.axis === "x" ? grid.avenueXs : grid.streetZs;
+  const holes = crosses
+    .map((cross) => {
+      const width = street.axis === "x" ? avenueWidthAt(grid, cross) : grid.streetWidth;
+      const hole = width / 2 + pad;
+      return { a: cross - hole, b: cross + hole };
+    })
+    .filter((item) => item.b > start && item.a < end)
+    .sort((left, right) => left.a - right.a);
+
+  const ranges: { start: number; end: number }[] = [];
+  let cursor = start;
+  for (const hole of holes) {
+    if (hole.a > cursor + 4) ranges.push({ start: cursor, end: hole.a });
+    cursor = Math.max(cursor, hole.b);
+  }
+  if (end > cursor + 4) ranges.push({ start: cursor, end });
+  return ranges;
+}
+
+function pointOnStreet(street: MapStreet, along: number, offset: number): { x: number; z: number } {
+  if (street.axis === "x") return { x: along, z: street.z + offset };
+  return { x: street.x + offset, z: along };
+}
+
+function pickPropModel(models: PropModelId[], noise: number): PropModelId {
+  return models[Math.floor(noise * models.length) % models.length]!;
+}
+
+function hitsFootprint(x: number, z: number, w: number, d: number, rects: LotRect[], margin: number): boolean {
+  const probe = { x, z, w, d };
+  return rects.some((rect) => overlaps(probe, rect, margin));
+}
+
+function generateTrees(
+  grid: CityGrid,
+  streets: MapStreet[],
+  parks: MapPark[],
+  lots: MapLot[],
+  buildings: MapBuilding[],
+): MapProp[] {
+  const trees: MapProp[] = [];
+  const footprints = buildings.map(buildingFootprint);
+  let index = 0;
+
+  const pushTree = (
+    x: number,
+    z: number,
+    model: PropModelId,
+    rotation: number,
+    scale: number,
+    margin: number,
+  ) => {
+    const span = model === BUSH_MODEL ? 2.2 : 3.4;
+    if (hitsFootprint(x, z, span, span, footprints, margin)) return;
+    trees.push({
+      id: `tree-${index++}`,
+      x,
+      z,
+      rotation,
+      model,
+      scale,
+    });
+  };
+
+  for (const street of streets) {
+    const sidewalk = grid.sidewalkWidth;
+    const treeOffset = street.width / 2 - sidewalk * 0.48;
+    const keep = street.axis === "x" ? 0.48 : 0.36;
+    for (const range of streetOpenRanges(street, grid, 4.5)) {
+      for (let along = range.start + 5, step = 0; along < range.end - 5; along += 22, step++) {
+        for (const side of [-1, 1] as const) {
+          const noise = hash2(Math.round(along) + side * 19, Math.round(street.x + street.z) + step);
+          if (noise > keep) continue;
+          const point = pointOnStreet(street, along + (noise - 0.5) * 5, side * treeOffset);
+          pushTree(
+            point.x,
+            point.z,
+            pickPropModel(TREE_MODELS, hash2(step + 5, side + 30)),
+            noise * Math.PI * 2,
+            0.82 + hash2(side + 2, step + 7) * 0.34,
+            1.2,
+          );
+        }
+      }
+    }
+  }
+
+  for (const park of parks) {
+    const spacing = 5.4;
+    const minX = park.x - park.width / 2 + 3.2;
+    const maxX = park.x + park.width / 2 - 3.2;
+    const minZ = park.z - park.depth / 2 + 3.2;
+    const maxZ = park.z + park.depth / 2 - 3.2;
+    for (let x = minX, col = 0; x <= maxX; x += spacing, col++) {
+      for (let z = minZ, row = 0; z <= maxZ; z += spacing, row++) {
+        const noise = hash2(Math.round(x * 3) + col, Math.round(z * 3) + row + 11);
+        if (noise < 0.22) continue;
+        const jitterX = (hash2(col + 4, row + 21) - 0.5) * 2.4;
+        const jitterZ = (hash2(col + 8, row + 3) - 0.5) * 2.4;
+        const px = x + jitterX;
+        const pz = z + jitterZ;
+        const bush = noise < 0.34;
+        pushTree(
+          px,
+          pz,
+          bush ? BUSH_MODEL : pickPropModel(TREE_MODELS, hash2(col + 17, row + 9)),
+          noise * Math.PI * 2,
+          bush ? 0.85 + noise * 0.35 : 0.88 + hash2(row, col + 13) * 0.4,
+          1.2,
+        );
+      }
+    }
+  }
+
+  for (const lot of lots) {
+    if (lot.kind !== "plaza") continue;
+    const spacing = 11;
+    const inset = 2.6;
+    const minX = lot.x - lot.width / 2 + inset;
+    const maxX = lot.x + lot.width / 2 - inset;
+    const minZ = lot.z - lot.depth / 2 + inset;
+    const maxZ = lot.z + lot.depth / 2 - inset;
+    const ring = [
+      ...Array.from({ length: Math.max(1, Math.floor((maxX - minX) / spacing) + 1) }, (_, i) => ({
+        x: minX + i * spacing,
+        z: minZ,
+      })),
+      ...Array.from({ length: Math.max(1, Math.floor((maxX - minX) / spacing) + 1) }, (_, i) => ({
+        x: minX + i * spacing,
+        z: maxZ,
+      })),
+      ...Array.from({ length: Math.max(1, Math.floor((maxZ - minZ) / spacing) - 1) }, (_, i) => ({
+        x: minX,
+        z: minZ + (i + 1) * spacing,
+      })),
+      ...Array.from({ length: Math.max(1, Math.floor((maxZ - minZ) / spacing) - 1) }, (_, i) => ({
+        x: maxX,
+        z: minZ + (i + 1) * spacing,
+      })),
+    ];
+    ring.forEach((point, step) => {
+      const noise = hash2(Math.round(point.x) + step, Math.round(point.z) + 44);
+      if (noise > 0.55) return;
+      pushTree(
+        point.x,
+        point.z,
+        pickPropModel(TREE_MODELS, noise),
+        noise * Math.PI * 2,
+        0.8 + noise * 0.3,
+        2.4,
+      );
+    });
+  }
+
+  return trees;
+}
+
+function generateCars(
+  grid: CityGrid,
+  streets: MapStreet[],
+  lots: MapLot[],
+  buildings: MapBuilding[],
+): MapProp[] {
+  const cars: MapProp[] = [];
+  const footprints = buildings.map(buildingFootprint);
+  let index = 0;
+
+  const pushCar = (
+    x: number,
+    z: number,
+    model: PropModelId,
+    rotation: number,
+    scale: number,
+  ) => {
+    if (hitsFootprint(x, z, 3.6, 5.4, footprints, 2.2)) return;
+    cars.push({
+      id: `car-${index++}`,
+      x,
+      z,
+      rotation,
+      model,
+      scale,
+    });
+  };
+
+  for (const street of streets) {
+    const parkOffset = streetAsphaltWidth(street, grid) / 2 - 1.15;
+    const heading = street.axis === "x" ? 0 : Math.PI / 2;
+    const keep = street.axis === "x" ? 0.2 : 0.12;
+    for (const range of streetOpenRanges(street, grid, 6.5)) {
+      for (let along = range.start + 7, step = 0; along < range.end - 7; along += 16, step++) {
+        for (const side of [-1, 1] as const) {
+          const noise = hash2(Math.round(along) + side * 41, Math.round(street.width * 10) + step);
+          if (noise > keep) continue;
+          const gap = hash2(step + 3, side + 14);
+          const point = pointOnStreet(street, along + (gap - 0.5) * 3.2, side * parkOffset);
+          const flip = hash2(side + 8, step + 19) > 0.5 ? Math.PI : 0;
+          const model = noise > 0.09 ? pickPropModel(CAR_MODELS, hash2(step, side + 4)) : "food-truck";
+          pushCar(point.x, point.z, model, heading + flip, 0.92 + gap * 0.12);
+        }
+      }
+    }
+  }
+
+  for (const lot of lots) {
+    const stallGap = lot.kind === "parking" ? 4.6 : 7.2;
+    const keep = lot.kind === "parking" ? 0.38 : 0.08;
+    const minX = lot.x - lot.width / 2 + 2.8;
+    const maxX = lot.x + lot.width / 2 - 2.8;
+    const minZ = lot.z - lot.depth / 2 + 2.8;
+    const maxZ = lot.z + lot.depth / 2 - 2.8;
+    for (let x = minX, col = 0; x <= maxX; x += stallGap, col++) {
+      for (let z = minZ, row = 0; z <= maxZ; z += lot.kind === "parking" ? 6.4 : 9, row++) {
+        const noise = hash2(col * 13 + Math.round(lot.x), row * 17 + Math.round(lot.z));
+        if (noise > keep) continue;
+        const alongX = lot.width >= lot.depth;
+        const model =
+          lot.kind === "plaza" && noise < 0.035
+            ? "food-truck"
+            : pickPropModel(CAR_MODELS, hash2(row + 6, col + 2));
+        pushCar(
+          x + (hash2(col, row + 9) - 0.5) * 0.8,
+          z + (hash2(col + 5, row) - 0.5) * 0.8,
+          model,
+          (alongX ? Math.PI / 2 : 0) + (noise > 0.5 ? Math.PI : 0),
+          0.9 + noise * 0.14,
+        );
+      }
+    }
+  }
+
+  return cars;
+}
+
 function generateBuildings(
   grid: CityGrid,
   landmarks: MapBuilding[],
@@ -549,7 +813,10 @@ function parseMap(value: unknown): GameMap {
     ids.add(building.id);
   }
 
-  return { name: data.name, grid, buildings, streets, parks, lots, course };
+  const trees = generateTrees(grid, streets, parks, lots, buildings);
+  const cars = generateCars(grid, streets, lots, buildings);
+
+  return { name: data.name, grid, buildings, streets, parks, lots, trees, cars, course };
 }
 
 export const gameMap = parseMap(rawMap);

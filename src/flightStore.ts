@@ -42,11 +42,16 @@ const initialRace = (gateCount: number): RaceState => ({
   splits: [],
 });
 
+export const PLAYER_SPAWN_GRACE_MS = 2500;
+
 type FlightState = FlightTelemetry & {
   race: RaceState;
   passGate: (index: number, now: number) => void;
   resetRace: () => void;
   setGateCount: (count: number) => void;
+  /** performance.now() until local player-vs-player hits are ignored; 0 = armed. */
+  spawnProtectedUntil: number;
+  beginSpawnProtection: (durationMs?: number) => void;
   debug: boolean;
   fps: number;
   crashed: boolean;
@@ -87,6 +92,9 @@ export const useFlightStore = create<FlightState>((set) => ({
   players: [],
   playerIds: [],
   race: initialRace(0),
+  spawnProtectedUntil: 0,
+  beginSpawnProtection: (durationMs = PLAYER_SPAWN_GRACE_MS) =>
+    set({ spawnProtectedUntil: performance.now() + durationMs }),
   setGateCount: (count) =>
     set((state) => (state.race.gateCount === count ? state : { race: initialRace(count) })),
   passGate: (index, now) =>
@@ -135,6 +143,7 @@ export const useFlightStore = create<FlightState>((set) => ({
     crashed: false,
     crashReason: null,
     resetVersion: state.resetVersion + 1,
+    spawnProtectedUntil: performance.now() + PLAYER_SPAWN_GRACE_MS,
     race: { ...initialRace(state.race.gateCount), bestTime: state.race.bestTime },
   })),
   setFps: (fps) => set({ fps }),
