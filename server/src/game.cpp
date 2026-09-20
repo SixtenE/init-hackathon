@@ -10,7 +10,7 @@
 #include <optional>
 
 namespace {
-constexpr float kWorldHeight = 120.0f;
+constexpr float kWorldHeight = 360.0f;
 constexpr float kGroundY = -kWorldHeight / 2.0f;
 constexpr float kSpawnAltitude = 42.0f;
 constexpr float kSpawnY = kGroundY + kSpawnAltitude;
