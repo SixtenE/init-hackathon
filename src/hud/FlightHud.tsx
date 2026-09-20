@@ -47,7 +47,7 @@ export function FlightHud() {
   const throttle = Math.round(Math.max(0,Math.min(1,f.throttle))*100);
   const heading = String(Math.round(f.heading)%360).padStart(3,'0');
   const stall = !f.grounded && (speed <= 105 || f.angleOfAttack >= 0.42);
-  const warning = f.crashed ? 'CRASHED' : stall ? 'STALL' : speed > 350 ? 'OVERSPEED' : '';
+  const warning = f.crashed ? (f.crashReason ?? 'CRASHED') : stall ? 'STALL' : speed > 350 ? 'OVERSPEED' : '';
   const mode: string = DESIGN;
   return <div className={`flight-hud flight-hud--${mode}`} aria-label={`${mode} aircraft instruments`}>
     <div className="hud-instruments">
@@ -63,8 +63,10 @@ export function FlightHud() {
       </div>}
       <div className="hud-bottom"><div className="throttle"><div><span>THR</span><strong>{throttle}%</strong></div><div className="throttle-track" role="meter" aria-label="Throttle position" aria-valuemin={0} aria-valuemax={100} aria-valuenow={throttle}><i style={{width:`${throttle}%`}} /></div></div><div className="vertical-speed"><span>V/S</span> {f.verticalSpeed>=0?'+':''}{Math.round(f.verticalSpeed*3*196.85)} <span>FPM</span></div></div>
       <div className="hud-warning" role="status" aria-live="polite">{warning || (f.grounded ? 'ON GROUND' : '')}</div>
-      {f.crashed && <div className="hud-restart"><span>{f.crashReason}</span><button onClick={()=>useFlightStore.getState().resetFlight()}>Fly again</button></div>}
+      <button type="button" className="hud-reset" onClick={() => useFlightStore.getState().resetFlight()}>
+        Restart
+      </button>
     </div>
-    <div className="hud-controls">W / S · THROTTLE <b>·</b> A / D · BANK <b>·</b> SPACE / SHIFT · PITCH</div>
+    <div className="hud-controls">W / S · THROTTLE <b>·</b> A / D · BANK <b>·</b> SPACE / SHIFT · PITCH <b>·</b> R · RESTART</div>
   </div>;
 }
