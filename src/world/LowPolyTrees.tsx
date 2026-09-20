@@ -53,7 +53,7 @@ export function LowPolyTrees({ trees }: { trees: MapProp[] }) {
 
   return (
     <group>
-      <Instances geometry={trunkGeometry} material={trunkMaterial} limit={Math.max(1, rounds.length)} frustumCulled={false}>
+      <Instances geometry={trunkGeometry} material={trunkMaterial} limit={Math.max(1, rounds.length)}>
         {rounds.map((tree) => {
           const trunkHeight = tree.height * 0.38;
           const radius = tree.height * 0.032;
@@ -67,7 +67,7 @@ export function LowPolyTrees({ trees }: { trees: MapProp[] }) {
           );
         })}
       </Instances>
-      <Instances geometry={roundGeometry} material={roundMaterial} limit={Math.max(1, rounds.length)} frustumCulled={false}>
+      <Instances geometry={roundGeometry} material={roundMaterial} limit={Math.max(1, rounds.length)}>
         {rounds.map((tree) => {
           const radius = tree.height * 0.3;
           return (
@@ -80,7 +80,7 @@ export function LowPolyTrees({ trees }: { trees: MapProp[] }) {
           );
         })}
       </Instances>
-      <Instances geometry={bushGeometry} material={bushMaterial} limit={Math.max(1, bushes.length)} frustumCulled={false}>
+      <Instances geometry={bushGeometry} material={bushMaterial} limit={Math.max(1, bushes.length)}>
         {bushes.map((tree) => {
           const radius = tree.height * 0.48;
           return (

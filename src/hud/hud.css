@@ -43,3 +43,14 @@
 @media(max-width:520px){.instrument-row{gap:2px}.hud-instruments{width:96%}.flight-hud--projected .hud-instruments{width:auto}.flight-hud--projected .flight-tape{width:64px;height:154px;top:20%}.flight-hud--projected .flight-tape:first-child{left:10px}.flight-hud--projected .flight-tape:last-child{right:10px}.flight-hud--projected .flight-attitude{height:150px;bottom:64px}.flight-hud--projected .hud-warning{top:auto;bottom:222px}.hud-heading{font-size:16px}.hud-controls{font-size:9px;bottom:12px}.hud-controls b{padding:0 3px}.hud-bottom{gap:8px;font-size:11px}.throttle{width:110px}.hud-number strong{font-size:23px}.flight-hud--glass .hud-instruments{padding:10px 7px 0}.hud-mode{display:none}}
 @media(max-height:560px) and (min-width:521px){.hud-instruments{width:420px}.flight-hud--projected .hud-instruments{width:auto}.flight-hud--projected .flight-tape{height:150px;top:18%}.flight-hud--projected .flight-attitude{height:132px;bottom:48px}.flight-hud--projected .hud-warning{top:auto;bottom:186px}.flight-hud--glass .hud-instruments{width:350px;bottom:30px}.flight-hud--minimal .hud-instruments{width:330px;bottom:30px}.hud-controls{bottom:5px}.hud-heading{margin-bottom:3px}.hud-warning{margin-top:4px}}
 @media(prefers-reduced-motion:reduce){.throttle-track i{transition:none}}
+.race-finish{position:absolute;inset:0;z-index:12;display:grid;place-content:center;justify-items:center;gap:8px;background:#020806c7;color:#d7ffe6;font:13px/1.4 ui-monospace,SFMono-Regular,Consolas,monospace;text-align:center;pointer-events:auto}
+.race-finish-kicker{margin:0;letter-spacing:.28em;text-transform:uppercase;opacity:.7;font-size:11px}
+.race-finish-title{margin:0;font-size:42px;font-weight:600;letter-spacing:.34em;text-transform:uppercase;color:#ffe566}
+.race-finish-time{margin:10px 0 0;font-size:34px;font-variant-numeric:tabular-nums;letter-spacing:.08em;color:#fff}
+.race-finish-best{margin:0;letter-spacing:.18em;text-transform:uppercase;opacity:.75}
+.race-finish-best.is-new{color:#ffe566;opacity:1}
+.race-finish-meta{margin:4px 0 18px;letter-spacing:.16em;text-transform:uppercase;opacity:.55;font-size:11px}
+.race-finish-again{pointer-events:auto;border:1px solid #ffffff55;border-radius:5px;background:#14202ecc;color:#fff;padding:10px 22px;cursor:pointer;font:inherit;letter-spacing:.16em;text-transform:uppercase}
+.race-finish-again:hover{border-color:#fff;background:#1c2c3d}
+.race-finish-again:focus-visible{outline:2px solid #fff;outline-offset:3px}
+.race-finish-hint{margin:6px 0 0;letter-spacing:.2em;text-transform:uppercase;opacity:.4;font-size:10px}

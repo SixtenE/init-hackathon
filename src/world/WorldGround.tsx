@@ -73,16 +73,38 @@ export const cityGroundMaterial = new THREE.ShaderMaterial({
 
     void main() {
       vec2 p = vWorldXZ;
-      vec3 asphalt = texture2D(asphaltMap, p / 16.0).rgb;
-      vec3 grunge = texture2D(grungeMap, p / 22.0).rgb;
       float n = noise(p * 0.035);
-      float nFine = noise(p * 0.22);
 
       vec2 cityCenter = 0.5 * (cityMin + cityMax);
       vec2 cityHalf = 0.5 * (cityMax - cityMin);
       vec2 cityDelta = abs(p - cityCenter) - cityHalf;
       float citySdf = length(max(cityDelta, 0.0)) + min(max(cityDelta.x, cityDelta.y), 0.0);
       float urban = 1.0 - smoothstep(0.0, 90.0, citySdf);
+
+      // Most of the 800×800 plane is empty outskirts — skip city road/park math there.
+      if (urban < 0.001) {
+        vec3 grunge = texture2D(grungeMap, p / 22.0).rgb;
+        float nFine = noise(p * 0.22);
+        vec3 dirt = mix(vec3(0.27, 0.24, 0.19), vec3(0.22, 0.21, 0.17), n);
+        vec3 scrub = mix(vec3(0.24, 0.27, 0.18), vec3(0.20, 0.23, 0.16), nFine);
+        vec3 outskirts = mix(dirt, scrub, smoothstep(0.28, 0.72, n));
+        outskirts *= 0.88 + 0.18 * grunge.r;
+
+        vec2 delta = p - shadowCenter;
+        float s = sin(shadowYaw);
+        float c = cos(shadowYaw);
+        vec2 localShadow = vec2(c * delta.x - s * delta.y, s * delta.x + c * delta.y);
+        float ellipse = length(localShadow / max(shadowHalfSize, vec2(1e-4)));
+        float blob = 1.0 - smoothstep(0.18, 1.0, ellipse);
+        outskirts *= 1.0 - shadowOpacity * blob;
+
+        gl_FragColor = vec4(outskirts, 1.0);
+        return;
+      }
+
+      vec3 asphalt = texture2D(asphaltMap, p / 16.0).rgb;
+      vec3 grunge = texture2D(grungeMap, p / 22.0).rgb;
+      float nFine = noise(p * 0.22);
       float core = 1.0 - smoothstep(-18.0, 8.0, citySdf);
 
       vec2 local = (p - cityOrigin) / max(blockSize, vec2(1.0));
@@ -98,7 +120,8 @@ export const cityGroundMaterial = new THREE.ShaderMaterial({
 
       vec3 dirt = mix(vec3(0.27, 0.24, 0.19), vec3(0.22, 0.21, 0.17), n);
       vec3 scrub = mix(vec3(0.24, 0.27, 0.18), vec3(0.20, 0.23, 0.16), nFine);
-      vec3 outskirts = mix(dirt, scrub, smoothstep(0.28, 0.72, noise(p * 0.012)));
+      // Reuse n instead of a third noise sample for the fringe blend.
+      vec3 outskirts = mix(dirt, scrub, smoothstep(0.28, 0.72, n));
       outskirts *= 0.88 + 0.18 * grunge.r;
 
       vec3 plaza = mix(vec3(0.52, 0.50, 0.46), vec3(0.44, 0.43, 0.40), blockHash);

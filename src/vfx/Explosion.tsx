@@ -34,6 +34,9 @@ const EXPLOSION_TEXTURE_URLS = [
   ...DIRT_URLS,
 ];
 
+// Warm VFX textures once at module load so each aircraft mount does not re-fetch.
+useTexture.preload(EXPLOSION_TEXTURE_URLS);
+
 type FlipbookBillboardProps = {
   url: string;
   cols: number;

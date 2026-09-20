@@ -1,7 +1,7 @@
 import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
-import { Html } from "@react-three/drei";
 import { FlightHud } from "./hud/FlightHud";
+import { RaceFinishScreen } from "./hud/RaceFinishScreen";
 import { attitudeFromQuaternion } from "./hud/telemetry";
 import { Portfolio } from "./Portfolio";
 import {
@@ -51,11 +51,23 @@ const FOV_RESPONSE = 9;
 const WORLD_SIZE = 800;
 const WORLD_HEIGHT = 120;
 const GROUND_Y = -WORLD_HEIGHT / 2;
+const SPAWN_X = -32;
 const SPAWN_Z = 0;
-// Start in the middle of the arena, well above the ground and the
+// Start just west of the centre avenue, well above the ground and the
 // downtown skyline, with room to climb before the ceiling.
-const SPAWN_ALTITUDE = 42;
+const SPAWN_ALTITUDE = 65;
 const SPAWN_Y = GROUND_Y + SPAWN_ALTITUDE;
+const SPAWN_RADIUS = 20;
+
+function randomSpawnPosition(): [number, number, number] {
+  const angle = Math.random() * Math.PI * 2;
+  const radius = SPAWN_RADIUS * Math.sqrt(Math.random());
+  return [
+    SPAWN_X + Math.cos(angle) * radius,
+    SPAWN_Y,
+    SPAWN_Z + Math.sin(angle) * radius,
+  ];
+}
 
 // Flight control tuning (units per second / radians per second).
 const MAX_BANK = 0.62;
@@ -142,6 +154,7 @@ function updateCaptureFlightKeys() {
 export default function App() {
   const debug = useFlightStore((state) => state.debug);
   const resetVersion = useFlightStore((state) => state.resetVersion);
+  const raceFinished = useFlightStore((state) => state.race.status === "finished");
   const canvasRef = useRef<HTMLDivElement>(null);
   const [sceneLoaded, setSceneLoaded] = useState(false);
   const [inView, setInView] = useState(false);
@@ -207,7 +220,8 @@ export default function App() {
       <Portfolio />
       <div ref={canvasRef} className="relative h-screen w-full snap-start">
         <DebugPanel />
-        {started && <FlightHud />}
+        {started && !raceFinished && <FlightHud />}
+        {started && <RaceFinishScreen />}
         <GameLoadingScreen
           loaded={sceneLoaded}
           inView={inView}
@@ -217,7 +231,7 @@ export default function App() {
         <Canvas
           camera={{ fov: BASE_FOV, near: 0.1, far: 1100 }}
           dpr={[MIN_DPR, MAX_DPR]}
-          gl={{ alpha: false, powerPreference: "high-performance", stencil: false }}
+          gl={{ alpha: false, antialias: false, powerPreference: "high-performance", stencil: false }}
         >
           <FpsCounter />
           <ambientLight intensity={0.6} />
@@ -229,14 +243,14 @@ export default function App() {
               maxCcdSubsteps={2}
               debug={debug}
               colliders={false}
-              paused={!started}
+              paused={!started || raceFinished}
             >
-              <WorldCube debug={debug} />
+              <WorldCube />
               <WorldColliders />
               <WorldBuildings groundY={GROUND_Y} />
               <RaceCourse groundY={GROUND_Y} />
-              <Aircraft key={`aircraft-${resetVersion}`} debug={debug} />
-              <RemoteFleet debug={debug} />
+              <Aircraft key={`aircraft-${resetVersion}`} />
+              <RemoteFleet />
               <SceneReady onReady={handleSceneReady} />
             </Physics>
           </Suspense>
@@ -318,8 +332,14 @@ function stallProximity(airspeed: number, angleOfAttack: number, grounded: boole
 }
 
 function DebugPanel() {
+  const debug = useFlightStore((state) => state.debug);
+  if (!debug) return null;
+
+  return <DebugPanelContent />;
+}
+
+function DebugPanelContent() {
   const {
-    debug,
     fps,
     airspeed,
     throttle,
@@ -340,7 +360,6 @@ function DebugPanel() {
 
   return (
     <div
-      hidden={!debug}
       style={{
         position: "absolute",
         top: 8,
@@ -439,7 +458,7 @@ function FpsCounter() {
 // it always sits behind the scene, and it needs no texture assets.
 const SUN_DIRECTION = new THREE.Vector3(10, 20, 10).normalize();
 const SKY_RADIUS = 1000;
-const SKY_GEOMETRY = new THREE.SphereGeometry(1, 48, 32);
+const SKY_GEOMETRY = new THREE.SphereGeometry(1, 16, 12);
 const SKY_MATERIAL = new THREE.ShaderMaterial({
   side: THREE.BackSide,
   depthWrite: false,
@@ -533,17 +552,14 @@ const WORLD_MATERIAL = new THREE.MeshBasicMaterial({
   toneMapped: false,
 });
 
-function WorldCube({ debug }: { debug: boolean }) {
-  const ref = useRef<THREE.Mesh>(null);
-
+function WorldCube() {
   return (
     <>
       <Skybox />
       <group>
         <WorldGround size={WORLD_SIZE} y={GROUND_Y} />
-        <mesh ref={ref} geometry={WORLD_GEOMETRY} material={WORLD_MATERIAL} />
+        <mesh geometry={WORLD_GEOMETRY} material={WORLD_MATERIAL} />
       </group>
-      {debug && <EntityBounds target={ref} />}
     </>
   );
 }
@@ -568,73 +584,6 @@ function WorldColliders() {
       <CuboidCollider name="wall-z" args={[halfSize, halfHeight, 0.5]} position={[0, 0, -halfSize - 0.5]} />
     </RigidBody>
   );
-}
-
-// Keep helpers outside their targets so they never enlarge their own bounds.
-// Resources and frame updates exist only while debug mode is enabled.
-function EntityBounds({ target }: { target: React.RefObject<THREE.Object3D | null> }) {
-  const scene = useThree((state) => state.scene);
-  const helper = useRef<THREE.BoxHelper | null>(null);
-
-  useEffect(() => {
-    if (!target.current) return;
-    const bounds = new THREE.BoxHelper(target.current, "#00ffff");
-    bounds.material.depthTest = false;
-    bounds.material.depthWrite = false;
-    bounds.material.toneMapped = false;
-    bounds.renderOrder = 1000;
-    scene.add(bounds);
-    helper.current = bounds;
-    return () => {
-      scene.remove(bounds);
-      bounds.dispose();
-      helper.current = null;
-    };
-  }, [scene, target]);
-
-  useFrame(() => helper.current?.update());
-  return null;
-}
-
-// Build the aircraft bounds in its own coordinate space. Unlike BoxHelper's
-// world-aligned bounds, this stays tight when the plane yaws or banks.
-function LocalEntityBounds({ target }: { target: React.RefObject<THREE.Object3D | null> }) {
-  useEffect(() => {
-    const object = target.current;
-    if (!object) return;
-
-    object.updateWorldMatrix(true, true);
-    const inverseWorld = object.matrixWorld.clone().invert();
-    const relativeMatrix = new THREE.Matrix4();
-    const meshBounds = new THREE.Box3();
-    const localBounds = new THREE.Box3();
-
-    object.traverse((child) => {
-      if (!(child instanceof THREE.Mesh) || !child.geometry) return;
-      if (!child.geometry.boundingBox) child.geometry.computeBoundingBox();
-      if (!child.geometry.boundingBox) return;
-
-      relativeMatrix.multiplyMatrices(inverseWorld, child.matrixWorld);
-      meshBounds.copy(child.geometry.boundingBox).applyMatrix4(relativeMatrix);
-      localBounds.union(meshBounds);
-    });
-
-    if (localBounds.isEmpty()) return;
-    const helper = new THREE.Box3Helper(localBounds, "#00ffff");
-    const helperMaterial = helper.material as THREE.LineBasicMaterial;
-    helperMaterial.depthTest = false;
-    helperMaterial.depthWrite = false;
-    helperMaterial.toneMapped = false;
-    helper.renderOrder = 1000;
-    object.add(helper);
-
-    return () => {
-      object.remove(helper);
-      helper.dispose();
-    };
-  }, [target]);
-
-  return null;
 }
 
 type KeyState = Record<string, boolean>;
@@ -798,10 +747,9 @@ function remoteIdFromHit(bodyName: string): number | undefined {
   return match ? Number(match[1]) : undefined;
 }
 
-function Aircraft({ debug }: { debug: boolean }) {
+function Aircraft() {
   const bodyRef = useRef<RapierRigidBody>(null);
   const ref = useRef<THREE.Group>(null);
-  const modelRef = useRef<THREE.Group>(null);
   const explosionRef = useRef<ExplosionHandle>(null);
   const impactVelocity = useRef(new THREE.Vector3(0, 0, INITIAL_AIRSPEED));
   const pitchTarget = useRef(TRIM_AOA);
@@ -814,6 +762,7 @@ function Aircraft({ debug }: { debug: boolean }) {
   const crashed = useRef(false);
   const spawnedAt = useRef(performance.now());
   const keys = useKeyboard();
+  const [spawnPosition] = useState(randomSpawnPosition);
 
   useLayoutEffect(() => {
     spawnedAt.current = performance.now();
@@ -1099,7 +1048,7 @@ function Aircraft({ debug }: { debug: boolean }) {
         ref={bodyRef}
         name="aircraft"
         colliders={false}
-        position={[0, SPAWN_Y, SPAWN_Z]}
+        position={spawnPosition}
         rotation={[-TRIM_AOA, 0, 0]}
         linearVelocity={[0, 0, INITIAL_AIRSPEED]}
         linearDamping={0.004}
@@ -1111,13 +1060,10 @@ function Aircraft({ debug }: { debug: boolean }) {
         onIntersectionEnter={handleIntersectionEnter}
       >
         <group ref={ref}>
-          <group ref={modelRef}>
-            <AirbusA320 />
-          </group>
+          <AirbusA320 />
         </group>
         <AircraftColliders />
       </RigidBody>
-      {debug && <LocalEntityBounds target={modelRef} />}
       <GroundShadow target={ref} />
       <ChaseCamera target={ref} throttle={throttle} />
       <Suspense fallback={null}>
@@ -1127,7 +1073,7 @@ function Aircraft({ debug }: { debug: boolean }) {
   );
 }
 
-function RemoteFleet({ debug }: { debug: boolean }) {
+function RemoteFleet() {
   const localPlayerId = useFlightStore((state) => state.localPlayerId);
   const playerIds = useFlightStore((state) => state.playerIds);
   if (localPlayerId == null) return null;
@@ -1135,39 +1081,15 @@ function RemoteFleet({ debug }: { debug: boolean }) {
     <>
       {playerIds.map((id) =>
         id === localPlayerId ? null : (
-          <RemoteAircraft key={id} playerId={id} debug={debug} />
+          <RemoteAircraft key={id} playerId={id} />
         ),
       )}
     </>
   );
 }
 
-function PilotLabel({ playerId }: { playerId: number }) {
-  const name = useFlightStore(
-    (state) => state.players.find((player) => player.id === playerId)?.name ?? `Pilot-${playerId}`,
-  );
-  return (
-    <Html position={[0, 7.5, -6]} center distanceFactor={40} style={{ pointerEvents: "none" }}>
-      <div
-        style={{
-          padding: "2px 8px",
-          borderRadius: 4,
-          background: "rgba(0, 0, 0, 0.55)",
-          color: "#fff",
-          fontFamily: "system-ui, sans-serif",
-          fontSize: 12,
-          whiteSpace: "nowrap",
-        }}
-      >
-        {name}
-      </div>
-    </Html>
-  );
-}
-
-function RemoteAircraft({ playerId, debug }: { playerId: number; debug: boolean }) {
+function RemoteAircraft({ playerId }: { playerId: number }) {
   const bodyRef = useRef<RapierRigidBody>(null);
-  const modelRef = useRef<THREE.Group>(null);
   const visualRef = useRef<THREE.Group>(null);
   const explosionRef = useRef<ExplosionHandle>(null);
   const crashed = useRef(false);
@@ -1224,17 +1146,13 @@ function RemoteAircraft({ playerId, debug }: { playerId: number; debug: boolean 
         type="kinematicPosition"
         colliders={false}
         name={`player-${playerId}`}
-        position={[0, SPAWN_Y, SPAWN_Z]}
+        position={[SPAWN_X, SPAWN_Y, SPAWN_Z]}
       >
         <group ref={visualRef}>
-          <group ref={modelRef}>
-            <AirbusA320 />
-          </group>
-          <PilotLabel playerId={playerId} />
+          <AirbusA320 />
         </group>
         {hitboxActive && <AircraftColliders sensor name="player" />}
       </RigidBody>
-      {debug && <LocalEntityBounds target={modelRef} />}
       <Suspense fallback={null}>
         <Explosion key={spawn} ref={explosionRef} groundY={GROUND_Y} />
       </Suspense>

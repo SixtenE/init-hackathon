@@ -1,213 +1,154 @@
 {
-  "name": "low-poly-city",
+  "name": "metro-grid",
   "grid": {
-    "avenueXs": [-240, -192, -144, -96, -48, 0, 48, 96, 144, 192, 240],
-    "streetZs": [20, 60, 100, 140, 180, 220, 260, 300, 340, 380],
+    "avenueXs": [-336, -288, -240, -192, -144, -96, -48, 0, 48, 96, 144, 192, 240, 288, 336],
+    "streetZs": [-336, -288, -240, -192, -144, -96, -48, 0, 48, 96, 144, 192, 240, 288, 336],
     "avenueWidth": 16,
     "centerAvenueWidth": 24,
     "streetWidth": 12,
     "sidewalkWidth": 2.2,
-    "approachZ": -96
+    "approachZ": -336
   },
   "parks": [
-    { "id": "west-green", "col": 2, "row": 4 },
-    { "id": "east-green", "col": 7, "row": 6 }
+    { "id": "south-west-green", "col": 2, "row": 2 },
+    { "id": "south-east-green", "col": 11, "row": 3 },
+    { "id": "north-west-green", "col": 3, "row": 10 },
+    { "id": "north-east-green", "col": 10, "row": 11 }
   ],
   "course": {
-    "name": "Downtown Circuit",
+    "name": "Metro Circuit",
     "gates": [
-      { "x": 0, "y": 34, "z": 80, "yaw": 0, "width": 28, "height": 18 },
-      { "x": 0, "y": 20, "z": 160, "yaw": 0, "width": 22, "height": 14 },
-      { "x": 0, "y": 56, "z": 260, "yaw": 0, "width": 26, "height": 18 },
-      { "x": 60, "y": 82, "z": 370, "yaw": 0.9, "width": 30, "height": 20 },
-      { "x": 150, "y": 84, "z": 405, "yaw": 1.5708, "width": 30, "height": 20 },
-      { "x": 244, "y": 62, "z": 300, "yaw": 3.1416, "width": 20, "height": 18 },
-      { "x": 244, "y": 38, "z": 160, "yaw": 3.1416, "width": 20, "height": 14 },
-      { "x": 205, "y": 34, "z": 20, "yaw": 3.7, "width": 28, "height": 18 },
-      { "x": 100, "y": 22, "z": -60, "yaw": 4.7124, "width": 28, "height": 14 },
-      { "x": 0, "y": 30, "z": -70, "yaw": 4.7124, "width": 30, "height": 20 }
+      { "x": 0, "y": 36, "z": 192, "yaw": 0, "width": 24, "height": 16 },
+      { "x": 48, "y": 42, "z": 264, "yaw": 0.7, "width": 28, "height": 18 },
+      { "x": 168, "y": 40, "z": 264, "yaw": 1.5708, "width": 28, "height": 18 },
+      { "x": 264, "y": 36, "z": 144, "yaw": 2.6, "width": 26, "height": 16 },
+      { "x": 264, "y": 28, "z": 0, "yaw": 3.1416, "width": 26, "height": 16 },
+      { "x": 168, "y": 34, "z": -192, "yaw": 3.7, "width": 28, "height": 18 },
+      { "x": 0, "y": 32, "z": -264, "yaw": 4.7124, "width": 28, "height": 16 },
+      { "x": -192, "y": 38, "z": -168, "yaw": 1.01, "width": 26, "height": 18 },
+      { "x": -96, "y": 34, "z": -108, "yaw": 0, "width": 28, "height": 18 }
     ]
   },
   "landmarks": [
     {
-      "id": "gate-west",
+      "id": "spawn-west",
       "x": -26,
-      "z": 80,
+      "z": 24,
       "width": 4,
-      "floors": 10,
+      "floors": 20,
       "depth": 4,
-      "model": "tower-10",
+      "model": "tower-07",
       "rotation": 0
     },
     {
-      "id": "gate-east",
+      "id": "spawn-east",
       "x": 26,
-      "z": 80,
+      "z": 24,
       "width": 4,
-      "floors": 11,
+      "floors": 22,
       "depth": 3,
-      "model": "tower-09",
+      "model": "tower-06",
       "rotation": 1.5708
     },
     {
-      "id": "west-low",
-      "x": -72,
-      "z": 80,
-      "width": 6,
-      "floors": 8,
-      "depth": 4,
-      "model": "tower-11",
-      "rotation": 0
-    },
-    {
-      "id": "east-low",
-      "x": 72,
-      "z": 80,
-      "width": 5,
-      "floors": 9,
-      "depth": 4,
-      "model": "tower-08",
-      "rotation": 1.5708
-    },
-    {
-      "id": "west-tower",
+      "id": "gate1-west",
       "x": -26,
-      "z": 120,
+      "z": 72,
       "width": 4,
-      "floors": 26,
+      "floors": 24,
       "depth": 4,
       "model": "tower-02",
       "rotation": 0
     },
     {
-      "id": "twin-a",
-      "x": 18.4,
-      "z": 120,
+      "id": "gate1-east",
+      "x": 26,
+      "z": 72,
       "width": 4,
-      "floors": 28,
+      "floors": 22,
       "depth": 3,
-      "model": "tower-06",
-      "rotation": 0
-    },
-    {
-      "id": "twin-b",
-      "x": 33.6,
-      "z": 120,
-      "width": 4,
-      "floors": 28,
-      "depth": 3,
-      "model": "tower-06",
-      "rotation": 0
-    },
-    {
-      "id": "west-office",
-      "x": -72,
-      "z": 120,
-      "width": 5,
-      "floors": 18,
-      "depth": 4,
-      "model": "tower-08",
-      "rotation": 0
-    },
-    {
-      "id": "east-annex",
-      "x": 72,
-      "z": 120,
-      "width": 3,
-      "floors": 14,
-      "depth": 4,
-      "model": "tower-09",
-      "rotation": 1.5708
-    },
-    {
-      "id": "mid-west",
-      "x": -120,
-      "z": 120,
-      "width": 5,
-      "floors": 12,
-      "depth": 4,
-      "model": "tower-06",
-      "rotation": 0
-    },
-    {
-      "id": "mid-east",
-      "x": 120,
-      "z": 120,
-      "width": 4,
-      "floors": 16,
-      "depth": 5,
       "model": "tower-07",
       "rotation": 1.5708
     },
     {
-      "id": "west-slim",
-      "x": -26,
-      "z": 160,
-      "width": 3,
-      "floors": 30,
+      "id": "north-twin-a",
+      "x": -18,
+      "z": 216,
+      "width": 4,
+      "floors": 28,
       "depth": 3,
-      "model": "tower-02",
+      "model": "tower-06",
       "rotation": 0
     },
     {
-      "id": "east-rear",
-      "x": 26,
-      "z": 160,
-      "width": 6,
-      "floors": 12,
-      "depth": 4,
-      "model": "tower-08",
-      "rotation": 1.5708
-    },
-    {
-      "id": "west-wide",
-      "x": -72,
-      "z": 160,
-      "width": 6,
-      "floors": 14,
-      "depth": 5,
-      "model": "tower-11",
-      "rotation": 1.5708
-    },
-    {
-      "id": "east-high",
-      "x": 72,
-      "z": 160,
+      "id": "north-twin-b",
+      "x": 18,
+      "z": 216,
       "width": 4,
+      "floors": 28,
+      "depth": 3,
+      "model": "tower-06",
+      "rotation": 0
+    },
+    {
+      "id": "north-turn",
+      "x": 72,
+      "z": 216,
+      "width": 5,
       "floors": 22,
       "depth": 4,
       "model": "tower-07",
       "rotation": 0
     },
     {
-      "id": "far-west",
-      "x": -26,
-      "z": 200,
-      "width": 5,
-      "floors": 20,
-      "depth": 3,
-      "model": "tower-07",
+      "id": "east-high",
+      "x": 216,
+      "z": 72,
+      "width": 4,
+      "floors": 26,
+      "depth": 4,
+      "model": "tower-02",
       "rotation": 1.5708
     },
     {
-      "id": "landmark",
-      "x": 26,
-      "z": 200,
+      "id": "east-low",
+      "x": 216,
+      "z": -24,
+      "width": 5,
+      "floors": 24,
+      "depth": 4,
+      "model": "tower-07",
+      "rotation": 0
+    },
+    {
+      "id": "south-marker",
+      "x": 24,
+      "z": -216,
+      "width": 4,
+      "floors": 26,
+      "depth": 4,
+      "model": "tower-07",
+      "rotation": 0
+    },
+    {
+      "id": "west-landmark",
+      "x": -216,
+      "z": -72,
       "width": 3,
-      "floors": 34,
+      "floors": 32,
       "depth": 3,
       "model": "tower-02",
       "rotation": 0
     },
     {
-      "id": "far-east",
-      "x": 72,
-      "z": 200,
-      "width": 4,
-      "floors": 18,
+      "id": "west-return",
+      "x": -72,
+      "z": 24,
+      "width": 5,
+      "floors": 26,
       "depth": 4,
-      "model": "tower-10",
-      "rotation": 0
+      "model": "tower-06",
+      "rotation": 1.5708
     }
   ]
 }

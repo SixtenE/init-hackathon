@@ -52,13 +52,8 @@ export function FlightHud() {
 
   useEffect(() => {
     if (f.crashed || f.spawnProtectedUntil <= performance.now()) return;
-    let frame = 0;
-    const tick = () => {
-      setNow(performance.now());
-      frame = requestAnimationFrame(tick);
-    };
-    frame = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(frame);
+    const id = window.setInterval(() => setNow(performance.now()), 100);
+    return () => window.clearInterval(id);
   }, [f.spawnProtectedUntil, f.crashed]);
 
   useEffect(() => {

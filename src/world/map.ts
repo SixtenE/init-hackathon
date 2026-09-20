@@ -114,8 +114,8 @@ type ParkSpec = { id: string; col: number; row: number };
 
 const HALF_PI = Math.PI / 2;
 const TALL_MODELS: CityModelId[] = ["tower-02", "tower-06", "tower-07"];
-const MID_MODELS: CityModelId[] = ["tower-08", "tower-09", "tower-10"];
-const LOW_MODELS: CityModelId[] = ["tower-10", "tower-11", "tower-08"];
+const MID_MODELS: CityModelId[] = ["tower-06", "tower-07", "tower-08", "tower-09"];
+const LOW_MODELS: CityModelId[] = ["tower-08", "tower-09", "tower-10"];
 
 function assertPositiveInt(value: unknown, label: string): number {
   if (typeof value !== "number" || !Number.isInteger(value) || value < 1) {
@@ -336,13 +336,31 @@ function blockLot(grid: CityGrid, col: number, row: number): LotRect {
   };
 }
 
-function isApproachLot(grid: CityGrid, lot: LotRect): boolean {
-  const firstStreet = grid.streetZs[0]!;
-  return Math.abs(lot.x) < 52 && lot.z < firstStreet + 32;
+function isApproachLot(_grid: CityGrid, lot: LotRect): boolean {
+  return Math.abs(lot.x) < 36 && Math.abs(lot.z) < 28;
+}
+
+const GATE_RING_SCALE = 2.2;
+
+function gateFootprint(gate: MapGate): LotRect {
+  const radius = (Math.max(gate.width, gate.height) / 2) * GATE_RING_SCALE + 8;
+  const along = 12;
+  const cosine = Math.cos(gate.yaw);
+  const sine = Math.sin(gate.yaw);
+  return {
+    x: gate.x,
+    z: gate.z,
+    w: (Math.abs(sine) * along + Math.abs(cosine) * radius) * 2,
+    d: (Math.abs(cosine) * along + Math.abs(sine) * radius) * 2,
+  };
+}
+
+function lotHitsCourse(lot: LotRect, gates: MapGate[]): boolean {
+  return gates.some((gate) => overlaps(lot, gateFootprint(gate), 2));
 }
 
 function pickModel(floors: number, noise: number): CityModelId {
-  const models = floors >= 22 ? TALL_MODELS : floors >= 12 ? MID_MODELS : LOW_MODELS;
+  const models = floors >= 18 ? TALL_MODELS : floors >= 12 ? MID_MODELS : LOW_MODELS;
   return models[Math.floor(noise * models.length) % models.length]!;
 }
 
@@ -353,9 +371,9 @@ function floorsForLot(lot: LotRect, grid: CityGrid, noise: number): number {
   const spanZ = (grid.streetZs[grid.streetZs.length - 1]! - grid.streetZs[0]!) / 2;
   const dist = Math.hypot((lot.x - coreX) / spanX, (lot.z - coreZ) / spanZ);
   const core = clamp(1 - dist, 0, 1);
-  const south = lot.z < grid.streetZs[0]! + 50;
-  const min = south ? 5 : Math.round(7 + core * 8);
-  const max = south ? 9 : Math.round(12 + core * 16);
+  const edge = dist > 0.85;
+  const min = edge ? 10 : Math.round(14 + core * 8);
+  const max = edge ? 18 : Math.round(22 + core * 14);
   return clamp(Math.round(min + noise * (max - min)), min, max);
 }
 
@@ -564,7 +582,7 @@ function generateTrees(
   for (const street of streets) {
     const sidewalk = grid.sidewalkWidth;
     const treeOffset = street.width / 2 - sidewalk * 0.48;
-    const keep = street.axis === "x" ? 0.48 : 0.36;
+    const keep = street.axis === "x" ? 0.28 : 0.18;
     for (const range of streetOpenRanges(street, grid, 4.5)) {
       for (let along = range.start + 5, step = 0; along < range.end - 5; along += 22, step++) {
         for (const side of [-1, 1] as const) {
@@ -685,7 +703,7 @@ function generateCars(
   for (const street of streets) {
     const parkOffset = streetAsphaltWidth(street, grid) / 2 - 1.15;
     const heading = street.axis === "x" ? 0 : Math.PI / 2;
-    const keep = street.axis === "x" ? 0.2 : 0.12;
+    const keep = street.axis === "x" ? 0.12 : 0.07;
     for (const range of streetOpenRanges(street, grid, 6.5)) {
       for (let along = range.start + 7, step = 0; along < range.end - 7; along += 16, step++) {
         for (const side of [-1, 1] as const) {
@@ -703,7 +721,7 @@ function generateCars(
 
   for (const lot of lots) {
     const stallGap = lot.kind === "parking" ? 4.6 : 7.2;
-    const keep = lot.kind === "parking" ? 0.38 : 0.08;
+    const keep = lot.kind === "parking" ? 0.22 : 0.06;
     const minX = lot.x - lot.width / 2 + 2.8;
     const maxX = lot.x + lot.width / 2 - 2.8;
     const minZ = lot.z - lot.depth / 2 + 2.8;
@@ -735,6 +753,7 @@ function generateBuildings(
   grid: CityGrid,
   landmarks: MapBuilding[],
   parks: ParkSpec[],
+  gates: MapGate[],
 ): MapBuilding[] {
   const buildings = [...landmarks];
   const parkKeys = new Set(parks.map((park) => `${park.col}:${park.row}`));
@@ -746,10 +765,11 @@ function generateBuildings(
       if (parkKeys.has(`${col}:${row}`)) continue;
       const lot = blockLot(grid, col, row);
       if (isApproachLot(grid, lot)) continue;
+      if (lotHitsCourse(lot, gates)) continue;
       if (landmarks.some((building) => overlaps(buildingFootprint(building), lot, 1))) continue;
 
       const noise = hash2(col + 11, row + 29);
-      const core = Math.hypot(lot.x / 160, (lot.z - 188) / 120) < 0.72;
+      const core = Math.hypot(lot.x / 220, lot.z / 220) < 0.7;
       let pattern: "one" | "two-x" | "two-z" | "skip" = "one";
       if (noise < 0.07) pattern = "skip";
       else if (core && noise > 0.52) pattern = noise > 0.78 ? "two-z" : "two-x";
@@ -805,7 +825,7 @@ function parseMap(value: unknown): GameMap {
   const streets = generateStreets(grid);
   const parks = generateParks(grid, parkSpecs);
   const lots = generateLots(grid, parkSpecs);
-  const buildings = generateBuildings(grid, landmarks, parkSpecs);
+  const buildings = generateBuildings(grid, landmarks, parkSpecs, course.gates);
   for (const building of buildings) {
     if (ids.has(building.id) && !landmarks.some((landmark) => landmark.id === building.id)) {
       throw new Error(`Duplicate building id "${building.id}"`);
@@ -829,7 +849,7 @@ export function cityExtent() {
   return {
     minX: minX - grid.avenueWidth / 2,
     maxX: maxX + grid.avenueWidth / 2,
-    minZ: grid.approachZ,
+    minZ: Math.min(grid.approachZ, grid.streetZs[0]!) - grid.streetWidth / 2,
     maxZ: maxZ + grid.streetWidth / 2,
     originX: minX,
     originZ: grid.streetZs[0]!,
