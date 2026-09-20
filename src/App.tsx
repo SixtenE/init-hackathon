@@ -49,7 +49,7 @@ const FOV_RESPONSE = 9;
 
 // Playable volume is a square arena on XZ, with a fixed ceiling height.
 const WORLD_SIZE = 800;
-const WORLD_HEIGHT = 120;
+const WORLD_HEIGHT = 360;
 const GROUND_Y = -WORLD_HEIGHT / 2;
 const SPAWN_X = -32;
 const SPAWN_Z = 0;
