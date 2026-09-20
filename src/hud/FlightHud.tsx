@@ -45,6 +45,7 @@ export function FlightHud() {
     pitch:s.pitch,bank:s.bank,heading:s.heading,airspeed:s.airspeed,throttle:s.throttle,
     y:s.position.y,verticalSpeed:s.verticalSpeed,crashed:s.crashed,crashReason:s.crashReason,
     grounded:s.grounded,angleOfAttack:s.angleOfAttack,spawnProtectedUntil:s.spawnProtectedUntil,
+    danielMode:s.danielMode,
   })));
   const [now, setNow] = useState(() => performance.now());
   const protectRemaining = Math.max(0, f.spawnProtectedUntil - now);
@@ -67,7 +68,7 @@ export function FlightHud() {
   const altitude = toFeetAgl(f.y);
   const throttle = Math.round(Math.max(0,Math.min(1,f.throttle))*100);
   const heading = String(Math.round(f.heading)%360).padStart(3,'0');
-  const stall = !f.grounded && (speed <= 105 || f.angleOfAttack >= 0.42);
+  const stall = !f.danielMode && !f.grounded && (speed <= 105 || f.angleOfAttack >= 0.42);
   const warning = f.crashed ? (f.crashReason ?? 'CRASHED') : stall ? 'STALL' : speed > 350 ? 'OVERSPEED' : '';
   const mode: string = DESIGN;
   const protectSeconds = (protectRemaining / 1000).toFixed(1);

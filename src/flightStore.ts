@@ -53,6 +53,7 @@ type FlightState = FlightTelemetry & {
   spawnProtectedUntil: number;
   beginSpawnProtection: (durationMs?: number) => void;
   debug: boolean;
+  danielMode: boolean;
   fps: number;
   crashed: boolean;
   crashReason: string | null;
@@ -62,6 +63,7 @@ type FlightState = FlightTelemetry & {
   players: PlayerState[];
   playerIds: number[];
   toggleDebug: () => void;
+  toggleDanielMode: () => void;
   crash: (reason: string) => void;
   resetFlight: () => void;
   setFps: (fps: number) => void;
@@ -74,6 +76,7 @@ type FlightState = FlightTelemetry & {
 
 export const useFlightStore = create<FlightState>((set) => ({
   debug: false,
+  danielMode: false,
   fps: 0,
   pitch: 0,
   bank: 0,
@@ -126,6 +129,7 @@ export const useFlightStore = create<FlightState>((set) => ({
       race: { ...initialRace(state.race.gateCount), bestTime: state.race.bestTime },
     })),
   toggleDebug: () => set((state) => ({ debug: !state.debug })),
+  toggleDanielMode: () => set((state) => ({ danielMode: !state.danielMode })),
   crash: (reason) => set((state) => state.crashed ? state : {
     crashed: true,
     crashReason: reason,

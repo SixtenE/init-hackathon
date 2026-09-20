@@ -321,6 +321,7 @@ function GameLoadingScreen({
 }
 
 function stallProximity(airspeed: number, angleOfAttack: number, grounded: boolean) {
+  if (useFlightStore.getState().danielMode) return 0;
   const aoaStall = THREE.MathUtils.clamp(angleOfAttack / STALL_AOA, 0, 1);
   if (grounded) return aoaStall;
   const speedStall = THREE.MathUtils.clamp(
@@ -351,7 +352,9 @@ function DebugPanelContent() {
     connection,
     localPlayerId,
     players,
+    danielMode,
   } = useFlightStore();
+  const toggleDanielMode = useFlightStore((state) => state.toggleDanielMode);
   const stallRatio = stallProximity(airspeed, angleOfAttack, grounded);
   const stallPercent = Math.round(stallRatio * 100);
   const stallColor = stallRatio >= 0.85 ? "#ff5a5a" : stallRatio >= 0.6 ? "#ffcc33" : "#7dff9a";
@@ -390,26 +393,47 @@ function DebugPanelContent() {
       <div>AoA {angleOfAttack >= 0 ? "+" : ""}{(angleOfAttack * THREE.MathUtils.RAD2DEG).toFixed(1)}°</div>
       <div style={{ display: "flex", alignItems: "center", gap: 8, margin: "2px 0" }}>
         <span style={{ color: stallRatio >= 0.85 ? stallColor : undefined }}>
-          Stall {stallPercent}%
+          {danielMode ? "Stall -- · DANIEL" : `Stall ${stallPercent}%`}
         </span>
-        <div
-          style={{
-            width: 120,
-            height: 8,
-            background: "rgba(255, 255, 255, 0.18)",
-            borderRadius: 4,
-            overflow: "hidden",
-          }}
-        >
+        {!danielMode && (
           <div
             style={{
-              width: `${stallPercent}%`,
-              height: "100%",
-              background: stallColor,
+              width: 120,
+              height: 8,
+              background: "rgba(255, 255, 255, 0.18)",
+              borderRadius: 4,
+              overflow: "hidden",
             }}
-          />
-        </div>
+          >
+            <div
+              style={{
+                width: `${stallPercent}%`,
+                height: "100%",
+                background: stallColor,
+              }}
+            />
+          </div>
+        )}
       </div>
+      <label
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 6,
+          margin: "4px 0 2px",
+          cursor: "pointer",
+          pointerEvents: "auto",
+          userSelect: "none",
+        }}
+      >
+        <input
+          type="checkbox"
+          checked={danielMode}
+          onChange={toggleDanielMode}
+          style={{ cursor: "pointer" }}
+        />
+        Daniel mode
+      </label>
       <div>X {position.x.toFixed(1)} · Y {position.y.toFixed(1)} · Z {position.z.toFixed(1)}</div>
       <div>{crashed ? "CRASHED" : grounded ? "GROUND" : "AIRBORNE"} · client physics</div>
       <div>W/S throttle · A/D turn · Space/Shift pitch · R restart</div>
@@ -956,14 +980,18 @@ function Aircraft() {
       MAX_PITCH,
     );
     angleOfAttack.current = aoa;
+    const danielMode = useFlightStore.getState().danielMode;
     let liftCoeff = LIFT_BASE_ACCELERATION + LIFT_AOA_ACCELERATION * aoa;
-    if (!groundedNow && aoa > STALL_AOA) {
+    if (!danielMode && !groundedNow && aoa > STALL_AOA) {
       const stallDepth = THREE.MathUtils.clamp((aoa - STALL_AOA) / 0.12, 0, 1);
       const stalledCoeff = LIFT_BASE_ACCELERATION + LIFT_AOA_ACCELERATION * STALL_AOA;
       liftCoeff = THREE.MathUtils.lerp(stalledCoeff, stalledCoeff * 0.25, stallDepth);
     }
+    const liftSpeed = danielMode
+      ? Math.max(forwardAirspeed, CRUISE_SPEED * 0.7)
+      : forwardAirspeed;
     const liftAcceleration = THREE.MathUtils.clamp(
-      (forwardAirspeed / CRUISE_SPEED) ** 2 * liftCoeff,
+      (liftSpeed / CRUISE_SPEED) ** 2 * liftCoeff,
       -MAX_LIFT_ACCELERATION,
       MAX_LIFT_ACCELERATION,
     );
