@@ -29,16 +29,20 @@ const AirbusA320 = lazy(() =>
 );
 
 // Camera offset in the aircraft's local space: behind, above, and slightly to the side.
-const CAMERA_OFFSET = new THREE.Vector3(0, 6, -26);
+const CAMERA_OFFSET = new THREE.Vector3(0, 4.5, -16);
+// Extra chase-cam pull-back at full throttle, in local Z (more negative = further aft).
+const CAMERA_SPEED_PULLBACK = 7;
 // Point the camera looks at, in the aircraft's local space (roughly the fuselage centre).
 const LOOK_AT_OFFSET = new THREE.Vector3(0, 1.5, -4);
 // How quickly the camera catches up (higher = stiffer).
 const FOLLOW_SPEED = 6;
-// Field of view widens with speed: BASE_FOV at/below FOV_MIN_SPEED, MAX_FOV at FOV_MAX_SPEED.
-const BASE_FOV = 60;
-const MAX_FOV = 115;
+// Field of view widens with throttle: BASE_FOV at idle, MAX_FOV at full power.
+// Ease-in keeps cruise throttle relatively tight so the last power band stretches the lens.
+const BASE_FOV = 50;
+const MAX_FOV = 100;
+const FOV_EASE = 2.4;
 // How quickly the FOV follows the target (higher = snappier).
-const FOV_RESPONSE = 6;
+const FOV_RESPONSE = 9;
 
 // Playable volume is a square arena on XZ, with a fixed ceiling height.
 const WORLD_SIZE = 800;
@@ -78,8 +82,6 @@ const VR_SPEED = knotsToSpeed(VR_SPEED_KT);
 const CRUISE_SPEED = knotsToSpeed(CRUISE_SPEED_KT);
 const MAX_THRUST_SPEED = knotsToSpeed(MAX_THRUST_SPEED_KT);
 const VLS_SPEED = STALL_SPEED * 1.23;
-const FOV_MIN_SPEED = knotsToSpeed(130);
-const FOV_MAX_SPEED = knotsToSpeed(300);
 
 const GRAVITY = 9.81;
 // Airborne spawn: cruise speed with the throttle that holds that speed in
@@ -1121,7 +1123,7 @@ function Aircraft({ debug }: { debug: boolean }) {
       </RigidBody>
       {debug && <LocalEntityBounds target={modelRef} />}
       <GroundShadow target={ref} />
-      <ChaseCamera target={ref} body={bodyRef} />
+      <ChaseCamera target={ref} throttle={throttle} />
       <Suspense fallback={null}>
         <Explosion ref={explosionRef} groundY={GROUND_Y} />
       </Suspense>
@@ -1215,16 +1217,21 @@ const currentLook = new THREE.Vector3();
 
 function ChaseCamera({
   target,
-  body,
+  throttle,
 }: {
   target: React.RefObject<THREE.Object3D | null>;
-  body: React.RefObject<RapierRigidBody | null>;
+  throttle: React.RefObject<number>;
 }) {
   useFrame(({ camera }, delta) => {
     const plane = target.current;
     if (!plane) return;
 
+    const throttleAmount = THREE.MathUtils.clamp(throttle.current ?? 0, 0, 1);
+    // Ease-in so most of the stretch lands in the high-power band.
+    const fovKick = throttleAmount ** FOV_EASE;
+
     cameraGoal.copy(CAMERA_OFFSET);
+    cameraGoal.z -= CAMERA_SPEED_PULLBACK * fovKick;
     plane.localToWorld(cameraGoal);
     lookGoal.copy(LOOK_AT_OFFSET);
     plane.localToWorld(lookGoal);
@@ -1234,18 +1241,9 @@ function ChaseCamera({
     currentLook.lerp(lookGoal, t);
     camera.lookAt(currentLook);
 
-    // Widen the field of view as speed builds for a sense of acceleration.
+    // Widen the field of view with throttle for a sense of power.
     if (camera instanceof THREE.PerspectiveCamera) {
-      const rigidBody = body.current;
-      const speed = rigidBody
-        ? Math.hypot(rigidBody.linvel().x, rigidBody.linvel().y, rigidBody.linvel().z)
-        : 0;
-      const speedRatio = THREE.MathUtils.clamp(
-        (speed - FOV_MIN_SPEED) / (FOV_MAX_SPEED - FOV_MIN_SPEED),
-        0,
-        1,
-      );
-      const targetFov = THREE.MathUtils.lerp(BASE_FOV, MAX_FOV, speedRatio);
+      const targetFov = THREE.MathUtils.lerp(BASE_FOV, MAX_FOV, fovKick);
       const nextFov = THREE.MathUtils.damp(camera.fov, targetFov, FOV_RESPONSE, delta);
       if (Math.abs(nextFov - camera.fov) > 0.001) {
         camera.fov = nextFov;

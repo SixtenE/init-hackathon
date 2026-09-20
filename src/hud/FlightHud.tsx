@@ -58,7 +58,7 @@ export function FlightHud() {
         <div className="hud-number"><span>HEIGHT</span><strong>{Math.round(altitude)}</strong><small>FT AGL</small></div>
       </div> : <div className="instrument-row">
         <Tape value={speed} label="SPD KT" step={20} />
-        <Attitude pitch={f.pitch} bank={f.bank} round={false} filled={mode === 'glass'} />
+        <Attitude pitch={f.pitch} bank={f.bank} round={mode === 'projected'} filled={mode === 'glass' || mode === 'projected'} />
         <Tape value={altitude} label="FT AGL" step={100} />
       </div>}
       <div className="hud-bottom"><div className="throttle"><div><span>THR</span><strong>{throttle}%</strong></div><div className="throttle-track" role="meter" aria-label="Throttle position" aria-valuemin={0} aria-valuemax={100} aria-valuenow={throttle}><i style={{width:`${throttle}%`}} /></div></div><div className="vertical-speed"><span>V/S</span> {f.verticalSpeed>=0?'+':''}{Math.round(f.verticalSpeed*3*196.85)} <span>FPM</span></div></div>
