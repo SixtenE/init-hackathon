@@ -5,14 +5,15 @@ const SPAWN_AIRSPEED = (250 * 0.514444) / 3;
 const SPAWN_THROTTLE = (250 / 330) ** 2;
 
 type FlightTelemetry = {
+  pitch: number;
+  bank: number;
+  heading: number;
   airspeed: number;
   throttle: number;
   verticalSpeed: number;
   angleOfAttack: number;
   grounded: boolean;
   position: { x: number; y: number; z: number };
-  /** Compass heading in radians about +Y; 0 faces +Z, increasing toward +X. */
-  heading: number;
 };
 
 export type ConnectionStatus = "disconnected" | "connecting" | "connected";
@@ -69,13 +70,15 @@ type FlightState = FlightTelemetry & {
 export const useFlightStore = create<FlightState>((set) => ({
   debug: false,
   fps: 0,
+  pitch: 0,
+  bank: 0,
+  heading: 0,
   airspeed: SPAWN_AIRSPEED,
   throttle: SPAWN_THROTTLE,
   verticalSpeed: 0,
   angleOfAttack: 0,
   grounded: false,
   position: { x: 0, y: 0, z: 0 },
-  heading: 0,
   crashed: false,
   crashReason: null,
   resetVersion: 0,
@@ -120,13 +123,15 @@ export const useFlightStore = create<FlightState>((set) => ({
     crashReason: reason,
   }),
   resetFlight: () => set((state) => ({
+    pitch: 0,
+    bank: 0,
+    heading: 0,
     airspeed: SPAWN_AIRSPEED,
     throttle: SPAWN_THROTTLE,
     verticalSpeed: 0,
     angleOfAttack: 0,
     grounded: false,
     position: { x: 0, y: 0, z: 0 },
-    heading: 0,
     crashed: false,
     crashReason: null,
     resetVersion: state.resetVersion + 1,
